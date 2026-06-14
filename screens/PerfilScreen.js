@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, StyleSheet, ActivityIndicator } from 'react-native';
+import { View, Text, ScrollView, TouchableOpacity, StyleSheet, ActivityIndicator, Alert, Linking } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../lib/supabase';
 import { theme } from '../lib/theme';
+
+const SUGERENCIAS_EMAIL = 'psugastti@gmail.com';
 
 export default function PerfilScreen() {
   const [bancos, setBancos] = useState([]);
@@ -25,16 +27,28 @@ export default function PerfilScreen() {
 
   const toggle = (id) => setSeleccionados(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
 
-  const MenuItem = ({ icon, label, value, color, last }) => (
-    <TouchableOpacity style={[s.menuItem, !last && s.menuDivider]} activeOpacity={0.7}>
+  const MenuItem = ({ icon, label, value, color, last, onPress }) => (
+    <TouchableOpacity style={[s.menuItem, !last && s.menuDivider]} activeOpacity={0.7} onPress={onPress} disabled={!onPress}>
       <View style={[s.menuIcon, { backgroundColor: (color || theme.colors.primary) + '18' }]}>
         <Ionicons name={icon} size={18} color={color || theme.colors.primary} />
       </View>
       <Text style={s.menuLabel}>{label}</Text>
       {value ? <Text style={s.menuValue}>{value}</Text> : null}
-      <Ionicons name="chevron-forward" size={16} color={theme.colors.textMuted} />
+      {onPress ? <Ionicons name="chevron-forward" size={16} color={theme.colors.textMuted} /> : null}
     </TouchableOpacity>
   );
+
+  const comoFunciona = () => Alert.alert(
+    '¿Cómo funciona Ahorrapp?',
+    'Reunimos en un solo lugar los descuentos y reintegros de los bancos de Paraguay. Buscá por comercio, elegí el día y mirá el detalle de cada beneficio. Si encontrás algo desactualizado, usá el botón "Reportar" dentro del beneficio.'
+  );
+  const privacidad = () => Alert.alert(
+    'Privacidad',
+    'Ahorrapp no te pide datos personales ni guarda información de tus tarjetas. Solo mostramos beneficios públicos de los bancos. Los reportes que envíes se usan únicamente para corregir la información.'
+  );
+  const sugerencias = () => Linking.openURL(
+    `mailto:${SUGERENCIAS_EMAIL}?subject=${encodeURIComponent('Sugerencia para Ahorrapp')}`
+  ).catch(() => Alert.alert('Escribinos', `Mandá tu sugerencia a ${SUGERENCIAS_EMAIL}`));
 
   if (loading) return (<View style={s.centered}><ActivityIndicator size="large" color={theme.colors.primary} /></View>);
 
@@ -89,10 +103,10 @@ export default function PerfilScreen() {
       <View style={s.section}>
         <Text style={s.sectionTitle}>Sobre Ahorrapp</Text>
         <View style={s.card}>
-          <MenuItem icon="information-circle-outline" label="¿Cómo funciona?" />
-          <MenuItem icon="shield-checkmark-outline" label="Privacidad" color={theme.colors.success} />
-          <MenuItem icon="chatbubble-outline" label="Sugerencias" color={theme.colors.navy} />
-          <MenuItem icon="star-outline" label="Versión" value="2.0.0" color={theme.colors.warning} last />
+          <MenuItem icon="information-circle-outline" label="¿Cómo funciona?" onPress={comoFunciona} />
+          <MenuItem icon="shield-checkmark-outline" label="Privacidad" color={theme.colors.success} onPress={privacidad} />
+          <MenuItem icon="chatbubble-outline" label="Sugerencias" color={theme.colors.navy} onPress={sugerencias} />
+          <MenuItem icon="star-outline" label="Versión" value="2.1.0" color={theme.colors.warning} last />
         </View>
       </View>
     </ScrollView>

@@ -1,8 +1,16 @@
-import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Linking } from 'react-native';
+import { useState } from 'react';
+import {
+  View, Text, ScrollView, TouchableOpacity, StyleSheet, Linking,
+  Modal, TextInput, ActivityIndicator, Alert,
+} from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { supabase } from '../lib/supabase';
 import { theme } from '../lib/theme';
 
 const DIAS_LABEL = { lunes: 'Lunes', martes: 'Martes', miercoles: 'Miércoles', jueves: 'Jueves', viernes: 'Viernes', sabado: 'Sábado', domingo: 'Domingo' };
+const REPORTE_EMAIL = 'psugastti@gmail.com';
+const MOTIVOS = ['% incorrecto', 'Días incorrectos', 'Beneficio vencido', 'Comercio equivocado', 'Otro'];
+const gs = (n) => 'Gs. ' + Number(n).toLocaleString('es-PY');
 
 export default function DetalleScreen({ route, navigation }) {
   const { beneficio: b } = route.params;
@@ -11,7 +19,40 @@ export default function DetalleScreen({ route, navigation }) {
   const tipo = b.tipo_tarjeta_simple || b.tipo_tarjeta || 'ambas';
   const color = b.bancos?.color || theme.colors.navy;
   const tipoLabel = { credito: 'Solo Crédito', debito: 'Solo Débito', premium: 'Premium', ambas: 'Crédito y Débito' };
-  const link = b.link_oficial || b.bancos?.url_web;
+  const link = b.url_bases || b.link_oficial || b.bancos?.url_beneficios || b.bancos?.url_web;
+  const niveles = Array.isArray(b.niveles) ? b.niveles : null;
+
+  // Reporte de error
+  const [modal, setModal] = useState(false);
+  const [motivo, setMotivo] = useState('');
+  const [mensaje, setMensaje] = useState('');
+  const [email, setEmail] = useState('');
+  const [enviando, setEnviando] = useState(false);
+
+  const enviarReporte = async () => {
+    if (!mensaje.trim()) { Alert.alert('Falta el mensaje', 'Contanos qué está mal para poder corregirlo.'); return; }
+    setEnviando(true);
+    try {
+      await supabase.from('reportes').insert({
+        beneficio_id: b.id,
+        comercio: b.comercio,
+        banco: b.bancos?.nombre,
+        motivo: motivo || null,
+        mensaje: mensaje.trim(),
+        email_reporta: email.trim() || null,
+      });
+    } catch (e) { /* igual abrimos el correo */ }
+    // Abrir correo prellenado como respaldo
+    const asunto = encodeURIComponent(`Reporte beneficio: ${b.comercio} (${b.bancos?.nombre || ''})`);
+    const cuerpo = encodeURIComponent(
+      `Beneficio: ${b.comercio}\nBanco: ${b.bancos?.nombre || ''}\nMotivo: ${motivo || '-'}\n\n${mensaje.trim()}\n\n(ID: ${b.id})`
+    );
+    Linking.openURL(`mailto:${REPORTE_EMAIL}?subject=${asunto}&body=${cuerpo}`).catch(() => {});
+    setEnviando(false);
+    setModal(false);
+    setMensaje(''); setMotivo(''); setEmail('');
+    Alert.alert('¡Gracias!', 'Recibimos tu reporte. Lo vamos a revisar para corregir el beneficio.');
+  };
 
   const InfoRow = ({ icon, label, value, tint }) => (
     <View style={s.infoRow}>
@@ -48,8 +89,8 @@ export default function DetalleScreen({ route, navigation }) {
             </View>
             {b.porcentaje ? (
               <View style={s.pctBig}>
-                <Text style={s.pctBigNum}>{b.porcentaje}%</Text>
-                <Text style={s.pctBigSub}>{b.etiqueta && b.etiqueta !== 'dia_padre' ? b.etiqueta : 'de descuento'}</Text>
+                <Text style={s.pctBigNum}>{niveles ? 'Hasta ' : ''}{b.porcentaje}%</Text>
+                <Text style={s.pctBigSub}>{niveles ? 'según tu nivel' : (b.etiqueta && b.etiqueta !== 'dia_padre' ? b.etiqueta : 'de descuento')}</Text>
               </View>
             ) : null}
           </View>
@@ -72,6 +113,26 @@ export default function DetalleScreen({ route, navigation }) {
           </View>
         ) : null}
 
+        {/* NIVELES DE REINTEGRO */}
+        {niveles ? (
+          <View style={s.card}>
+            <Text style={s.cardTitle}>Reintegro por nivel (ueno+)</Text>
+            <View style={s.nivHeaderRow}>
+              <Text style={[s.nivH, { flex: 1 }]}>Nivel</Text>
+              <Text style={[s.nivH, { width: 70, textAlign: 'right' }]}>Reintegro</Text>
+              <Text style={[s.nivH, { width: 96, textAlign: 'right' }]}>Tope reint.</Text>
+            </View>
+            {niveles.map((n) => (
+              <View key={n.nivel} style={s.nivRow}>
+                <View style={s.nivBadge}><Text style={s.nivBadgeTxt}>Nivel {n.nivel}</Text></View>
+                <Text style={[s.nivPct, { width: 70, textAlign: 'right' }]}>{n.porcentaje}%</Text>
+                <Text style={[s.nivTope, { width: 96, textAlign: 'right' }]}>{n.tope_reintegro ? gs(n.tope_reintegro) : '—'}</Text>
+              </View>
+            ))}
+            <Text style={s.nivNota}>Tu nivel se ve en la app del banco, en la sección "Beneficios". El % aplicado es el del nivel que tengas al momento de la compra.</Text>
+          </View>
+        ) : null}
+
         {/* DETALLES */}
         <View style={s.card}>
           <Text style={s.cardTitle}>Detalles del beneficio</Text>
@@ -82,31 +143,78 @@ export default function DetalleScreen({ route, navigation }) {
           <View style={s.divider} />
           <InfoRow icon="calendar-outline" label="Días válidos"
             value={b.todos_los_dias ? 'Todos los días' : b.dias?.length > 0 ? b.dias.map(d => DIAS_LABEL[d] || d).join(', ') : 'No especificado'} />
-          {b.tope_monto > 0 && (<><View style={s.divider} /><InfoRow icon="arrow-up-circle-outline" label="Tope de reintegro" value={`Gs. ${b.tope_monto.toLocaleString('es-PY')}`} tint={theme.colors.warning} /></>)}
-          {b.compra_minima > 0 && (<><View style={s.divider} /><InfoRow icon="arrow-down-circle-outline" label="Compra mínima" value={`Gs. ${b.compra_minima.toLocaleString('es-PY')}`} /></>)}
+          {b.tope_monto > 0 && (<><View style={s.divider} /><InfoRow icon="arrow-up-circle-outline" label="Tope de reintegro" value={gs(b.tope_monto)} tint={theme.colors.warning} /></>)}
+          {b.compra_minima > 0 && (<><View style={s.divider} /><InfoRow icon="arrow-down-circle-outline" label="Compra mínima" value={gs(b.compra_minima)} /></>)}
           {b.vence && (<><View style={s.divider} /><InfoRow icon="time-outline" label="Vigencia" value={`Hasta ${b.vence}`} tint={vencido ? theme.colors.danger : theme.colors.primary} /></>)}
           {b.requiere_qr && (<><View style={s.divider} /><InfoRow icon="qr-code-outline" label="Método de pago" value="Requiere pago con QR" tint={theme.colors.warning} /></>)}
           <View style={s.divider} />
           <InfoRow icon="pricetag-outline" label="Categoría" value={`${b.categorias?.emoji || ''} ${b.categorias?.nombre || '—'}`} />
         </View>
 
-        {b.url_bases ? (
-          <TouchableOpacity style={s.btnSecundario} onPress={() => Linking.openURL(b.url_bases)}>
-            <Ionicons name="document-text-outline" size={18} color={theme.colors.navy} />
-            <Text style={s.btnSecundarioTxt}>Ver bases y condiciones</Text>
-          </TouchableOpacity>
-        ) : null}
+        {/* REPORTAR ERROR */}
+        <TouchableOpacity style={s.btnReporte} activeOpacity={0.85} onPress={() => setModal(true)}>
+          <Ionicons name="flag-outline" size={17} color={theme.colors.danger} />
+          <Text style={s.btnReporteTxt}>¿Este beneficio tiene un error? Reportar aquí</Text>
+        </TouchableOpacity>
       </ScrollView>
 
-      {/* CTA FIJO */}
+      {/* CTA FIJO: BASES Y CONDICIONES */}
       {link ? (
         <View style={s.footer}>
           <TouchableOpacity style={s.btnPrincipal} activeOpacity={0.9} onPress={() => Linking.openURL(link)}>
-            <Text style={s.btnPrincipalTxt}>Activar en {b.bancos?.nombre || 'el banco'}</Text>
-            <Ionicons name="arrow-forward" size={18} color="#fff" />
+            <Ionicons name="document-text-outline" size={18} color="#fff" />
+            <Text style={s.btnPrincipalTxt}>Ver bases y condiciones</Text>
           </TouchableOpacity>
         </View>
       ) : null}
+
+      {/* MODAL REPORTE */}
+      <Modal visible={modal} animationType="slide" transparent onRequestClose={() => setModal(false)}>
+        <View style={s.modalOverlay}>
+          <View style={s.modalSheet}>
+            <View style={s.modalHandle} />
+            <View style={s.modalHead}>
+              <Text style={s.modalTitle}>Reportar un error</Text>
+              <TouchableOpacity onPress={() => setModal(false)}><Ionicons name="close" size={24} color={theme.colors.textMuted} /></TouchableOpacity>
+            </View>
+            <Text style={s.modalSub}>{b.comercio} · {b.bancos?.nombre}</Text>
+
+            <Text style={s.modalLabel}>¿Qué está mal?</Text>
+            <View style={s.motivosRow}>
+              {MOTIVOS.map(m => (
+                <TouchableOpacity key={m} style={[s.motivoChip, motivo === m && s.motivoChipActive]} onPress={() => setMotivo(m)}>
+                  <Text style={[s.motivoTxt, motivo === m && s.motivoTxtActive]}>{m}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            <Text style={s.modalLabel}>Explicanos lo que está mal</Text>
+            <TextInput
+              style={s.modalInput}
+              placeholder="Ej: el descuento ya no es 30%, ahora es 20%..."
+              placeholderTextColor={theme.colors.textMuted}
+              value={mensaje}
+              onChangeText={setMensaje}
+              multiline
+            />
+
+            <Text style={s.modalLabel}>Tu correo (opcional)</Text>
+            <TextInput
+              style={s.modalInputSingle}
+              placeholder="Para avisarte cuando lo corrijamos"
+              placeholderTextColor={theme.colors.textMuted}
+              value={email}
+              onChangeText={setEmail}
+              autoCapitalize="none"
+              keyboardType="email-address"
+            />
+
+            <TouchableOpacity style={s.btnEnviar} activeOpacity={0.9} onPress={enviarReporte} disabled={enviando}>
+              {enviando ? <ActivityIndicator color="#fff" /> : (<><Ionicons name="send" size={17} color="#fff" /><Text style={s.btnEnviarTxt}>Enviar reporte</Text></>)}
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -123,7 +231,7 @@ const s = StyleSheet.create({
   brandLogo: { width: 60, height: 60, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
   brandLogoTxt: { fontSize: 26, fontWeight: '800' },
   pctBig: { backgroundColor: theme.colors.primary, borderRadius: theme.radius.lg, paddingHorizontal: 16, paddingVertical: 8, alignItems: 'center' },
-  pctBigNum: { color: '#fff', fontSize: 26, fontWeight: '900' },
+  pctBigNum: { color: '#fff', fontSize: 24, fontWeight: '900' },
   pctBigSub: { color: 'rgba(255,255,255,0.9)', fontSize: 11, fontWeight: '600' },
   brandBanco: { color: theme.colors.textSecondary, fontSize: 13, fontWeight: '600' },
   brandComercio: { color: theme.colors.text, fontSize: 24, fontWeight: '800', marginTop: 2, marginBottom: 12 },
@@ -145,10 +253,38 @@ const s = StyleSheet.create({
   infoValue: { color: theme.colors.text, fontSize: 14, fontWeight: '700' },
   divider: { height: 1, backgroundColor: theme.colors.border, marginVertical: 12 },
 
-  btnSecundario: { backgroundColor: theme.colors.bgCard, borderRadius: theme.radius.lg, borderWidth: 1, borderColor: theme.colors.border, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', padding: 15, gap: 8, marginBottom: 12 },
-  btnSecundarioTxt: { color: theme.colors.navy, fontSize: 14, fontWeight: '700' },
+  // Niveles
+  nivHeaderRow: { flexDirection: 'row', alignItems: 'center', paddingBottom: 8, borderBottomWidth: 1, borderBottomColor: theme.colors.border, marginBottom: 6 },
+  nivH: { color: theme.colors.textMuted, fontSize: 11, fontWeight: '700', textTransform: 'uppercase' },
+  nivRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 8 },
+  nivBadge: { flex: 1, alignSelf: 'flex-start', backgroundColor: theme.colors.bgCardAlt, borderRadius: theme.radius.full, paddingHorizontal: 10, paddingVertical: 4, alignItems: 'center', maxWidth: 78 },
+  nivBadgeTxt: { color: theme.colors.navy, fontSize: 12, fontWeight: '700' },
+  nivPct: { color: theme.colors.primaryDark, fontSize: 15, fontWeight: '800' },
+  nivTope: { color: theme.colors.textSecondary, fontSize: 12, fontWeight: '600' },
+  nivNota: { color: theme.colors.textMuted, fontSize: 11, lineHeight: 16, marginTop: 10 },
+
+  btnReporte: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: '#FDECEC', borderRadius: theme.radius.lg, paddingVertical: 14, borderWidth: 1, borderColor: '#F7C9C9', marginBottom: 8 },
+  btnReporteTxt: { color: theme.colors.danger, fontSize: 13, fontWeight: '700' },
 
   footer: { padding: 16, paddingBottom: 28, backgroundColor: theme.colors.bg, borderTopWidth: 1, borderTopColor: theme.colors.border },
   btnPrincipal: { backgroundColor: theme.colors.navy, borderRadius: theme.radius.lg, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', padding: 17, gap: 8 },
   btnPrincipalTxt: { color: '#fff', fontSize: 16, fontWeight: '800' },
+
+  // Modal
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(14,42,78,0.45)', justifyContent: 'flex-end' },
+  modalSheet: { backgroundColor: theme.colors.bg, borderTopLeftRadius: 26, borderTopRightRadius: 26, padding: 20, paddingBottom: 34 },
+  modalHandle: { width: 44, height: 5, borderRadius: 3, backgroundColor: theme.colors.borderStrong, alignSelf: 'center', marginBottom: 14 },
+  modalHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  modalTitle: { color: theme.colors.text, fontSize: 19, fontWeight: '800' },
+  modalSub: { color: theme.colors.textSecondary, fontSize: 13, marginTop: 2, marginBottom: 16 },
+  modalLabel: { color: theme.colors.text, fontSize: 13, fontWeight: '700', marginBottom: 8, marginTop: 6 },
+  motivosRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 8 },
+  motivoChip: { backgroundColor: theme.colors.bgCard, borderRadius: theme.radius.full, paddingHorizontal: 13, paddingVertical: 8, borderWidth: 1, borderColor: theme.colors.border },
+  motivoChipActive: { backgroundColor: theme.colors.navy, borderColor: theme.colors.navy },
+  motivoTxt: { color: theme.colors.textSecondary, fontSize: 12, fontWeight: '600' },
+  motivoTxtActive: { color: '#fff', fontWeight: '700' },
+  modalInput: { backgroundColor: theme.colors.bgCard, borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.colors.border, padding: 12, minHeight: 90, color: theme.colors.text, fontSize: 14, textAlignVertical: 'top' },
+  modalInputSingle: { backgroundColor: theme.colors.bgCard, borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.colors.border, padding: 12, color: theme.colors.text, fontSize: 14 },
+  btnEnviar: { backgroundColor: theme.colors.primary, borderRadius: theme.radius.lg, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, padding: 16, marginTop: 18 },
+  btnEnviarTxt: { color: '#fff', fontSize: 15, fontWeight: '800' },
 });
