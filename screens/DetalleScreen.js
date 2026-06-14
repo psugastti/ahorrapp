@@ -24,6 +24,7 @@ export default function DetalleScreen({ route, navigation }) {
   const tipoLabel = { credito: 'Solo Crédito', debito: 'Solo Débito', premium: 'Premium', ambas: 'Crédito y Débito' };
   const link = b.url_bases || b.link_oficial || b.bancos?.url_beneficios || b.bancos?.url_web;
   const niveles = Array.isArray(b.niveles) ? b.niveles : null;
+  const semanal = b.tope_periodo === 'semanal';
 
   const [misTarjetas, setMisTarjetas] = useState([]);
   const [fav, setFav] = useState(false);
@@ -110,14 +111,22 @@ export default function DetalleScreen({ route, navigation }) {
         {/* DESCRIPCIÓN */}
         {b.descripcion ? (<View style={s.card}><Text style={s.cardTitle}>¿Cómo funciona?</Text><Text style={s.cardText}>{b.descripcion}</Text></View>) : null}
 
+        {/* OBSERVACIÓN */}
+        {b.observacion ? (
+          <View style={s.obsCard}>
+            <Ionicons name="information-circle" size={18} color={theme.colors.warning} />
+            <Text style={s.obsTxt}>{b.observacion}</Text>
+          </View>
+        ) : null}
+
         {/* NIVELES */}
         {niveles ? (
           <View style={s.card}>
-            <Text style={s.cardTitle}>Reintegro por nivel (ueno+)</Text>
+            <Text style={s.cardTitle}>Reintegro por nivel (ueno+){semanal ? ' · semanal' : ''}</Text>
             <View style={s.nivHeaderRow}>
               <Text style={[s.nivH, { flex: 1 }]}>Nivel</Text>
               <Text style={[s.nivH, { width: 70, textAlign: 'right' }]}>Reintegro</Text>
-              <Text style={[s.nivH, { width: 96, textAlign: 'right' }]}>Tope reint.</Text>
+              <Text style={[s.nivH, { width: 96, textAlign: 'right' }]}>{semanal ? 'Tope sem.' : 'Tope'}</Text>
             </View>
             {niveles.map((n) => {
               const miNivel = pers && pers.nivel === n.nivel;
@@ -155,7 +164,12 @@ export default function DetalleScreen({ route, navigation }) {
             <Ionicons name="shield-checkmark" size={15} color={theme.colors.success} />
             <Text style={s.verifTxt}>Datos verificados el {fecha(b.verificado_en)}</Text>
           </View>
-        ) : null}
+        ) : (
+          <View style={s.verifRow}>
+            <Ionicons name="alert-circle-outline" size={15} color={theme.colors.warning} />
+            <Text style={[s.verifTxt, { color: theme.colors.warning }]}>Dato no confirmado con la fuente — verificá en las bases</Text>
+          </View>
+        )}
 
         {/* REPORTAR ERROR */}
         <TouchableOpacity style={s.btnReporte} activeOpacity={0.85} onPress={() => setModal(true)}>
@@ -240,6 +254,9 @@ const s = StyleSheet.create({
   nivPct: { color: theme.colors.primaryDark, fontSize: 15, fontWeight: '800' },
   nivTope: { color: theme.colors.textSecondary, fontSize: 12, fontWeight: '600' },
   nivNota: { color: theme.colors.textMuted, fontSize: 11, lineHeight: 16, marginTop: 10 },
+
+  obsCard: { flexDirection: 'row', gap: 10, backgroundColor: '#FFF8EC', borderRadius: theme.radius.lg, padding: 14, marginBottom: 12, borderWidth: 1, borderColor: '#F5E3C2' },
+  obsTxt: { flex: 1, color: '#8A6D3B', fontSize: 13, lineHeight: 19, fontWeight: '600' },
 
   verifRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, marginBottom: 10 },
   verifTxt: { color: theme.colors.textSecondary, fontSize: 12, fontWeight: '600' },
