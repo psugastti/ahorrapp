@@ -6,6 +6,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { theme } from './lib/theme';
 import HomeScreen from './screens/HomeScreen';
 import FavoritosScreen from './screens/FavoritosScreen';
+import ComercioScreen from './screens/ComercioScreen';
 import DetalleScreen from './screens/DetalleScreen';
 import PerfilScreen from './screens/PerfilScreen';
 
@@ -51,6 +52,7 @@ export default function App() {
       <StatusBar style="dark" />
       <Stack.Navigator screenOptions={{ headerShown: false }}>
         <Stack.Screen name="Main" component={HomeTabs} />
+        <Stack.Screen name="Comercio" component={ComercioScreen} />
         <Stack.Screen name="Detalle" component={DetalleScreen} />
       </Stack.Navigator>
     </NavigationContainer>
