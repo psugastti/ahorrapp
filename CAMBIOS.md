@@ -1,4 +1,6 @@
 # Cambios Ahorrapp (Benefix sync + frontend)
+<!-- deploy v4: trigger build (Git conectado a Vercel) -->
+
 
 ## Base de datos (Supabase) — ya aplicado, en vivo
 - Importados los descuentos de Benefix: **+479 beneficios nuevos** (total **606**), sin duplicar los que ya tenías.
