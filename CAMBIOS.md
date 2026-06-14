@@ -79,6 +79,39 @@ git add -A && git commit -m "v3: links beneficios, split comercios, niveles Ueno
 
 ---
 
+---
+
+## v4 — comparativa con Benefix: 5 mejoras (14/06/2026)
+
+### 1) Fiabilidad
+- Nueva columna `verificado_en` y **sello "Datos verificados el [fecha]"** en cada detalle.
+- Nueva columna `tipo_beneficio` (**descuento / reintegro / cuotas s/interés**) con badge en lista y detalle — deja claro si es al instante o cashback.
+
+### 2) Mis bancos persistente + logos reales
+- Logos reales de los 14 bancos (favicon oficial) con fallback a inicial — `bancos.logo_url`.
+- "Mis bancos" se **guarda en el dispositivo** (AsyncStorage) y hay toggle "Solo mis bancos" en Inicio.
+
+### 3) Mis tarjetas / ¿con cuál pago?
+- En Perfil se cargan tarjetas (banco + tipo + **nivel ueno+** 1-5).
+- En cada beneficio aparece **"Tu tarjeta"** si aplica, y en Ueno se muestra **tu % exacto según tu nivel** (no "hasta 40%").
+- Toggle "Puedo usar" en Inicio para ver solo lo aplicable a tus tarjetas.
+
+### 4) Notificaciones (preparado)
+- Toggle "Aviso de beneficios del día" en Perfil. En web avisa al abrir; el **push real (app cerrada) queda para la versión nativa** iOS/Android.
+
+### 5) Favoritos + modo instalable
+- **Favoritos** con corazón en cada beneficio y **pestaña Favoritos** nueva.
+- **PWA instalable**: `app.json` con manifest (nombre, colores, standalone) → "Agregar a pantalla de inicio".
+
+### Datos nuevos
+Local-first (sin login) con login opcional a futuro. Nuevas tablas/columnas: `beneficios.verificado_en`, `beneficios.tipo_beneficio`, `bancos.logo_url`. Nueva dependencia: `@react-native-async-storage/async-storage`.
+
+### Pendiente (acordado)
+- **Logo real:** dejé un placeholder en `assets/logo.png`. Reemplazá ese archivo por el logo definitivo (misma ruta y nombre) y listo, no hace falta tocar código.
+- **Push nativo, modo oscuro y mapa de sucursales** (lat/lng) quedan para una próxima etapa.
+
+---
+
 ### Pendiente: logo y tipografía
 Cuando subas el **logo** (PNG/SVG) lo coloco en el header de Inicio y en splash/íconos (`assets/`). Si la **tipografía** es custom (ej. Poppins), la agrego con `expo-font` y la aplico globalmente. Por ahora se usa la tipografía del sistema.
 

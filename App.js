@@ -5,6 +5,7 @@ import { StatusBar } from 'expo-status-bar';
 import { Ionicons } from '@expo/vector-icons';
 import { theme } from './lib/theme';
 import HomeScreen from './screens/HomeScreen';
+import FavoritosScreen from './screens/FavoritosScreen';
 import DetalleScreen from './screens/DetalleScreen';
 import PerfilScreen from './screens/PerfilScreen';
 
@@ -30,6 +31,7 @@ function HomeTabs() {
         tabBarIcon: ({ color, focused }) => {
           const icons = {
             Inicio: focused ? 'home' : 'home-outline',
+            Favoritos: focused ? 'heart' : 'heart-outline',
             Perfil: focused ? 'person' : 'person-outline',
           };
           return <Ionicons name={icons[route.name]} size={23} color={color} />;
@@ -37,6 +39,7 @@ function HomeTabs() {
       })}
     >
       <Tab.Screen name="Inicio" component={HomeScreen} />
+      <Tab.Screen name="Favoritos" component={FavoritosScreen} />
       <Tab.Screen name="Perfil" component={PerfilScreen} />
     </Tab.Navigator>
   );

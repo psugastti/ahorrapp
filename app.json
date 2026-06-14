@@ -1,10 +1,11 @@
 {
   "expo": {
-    "name": "ahorrapp",
+    "name": "Ahorrapp",
     "slug": "ahorrapp",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
+    "scheme": "ahorrapp",
     "userInterfaceStyle": "light",
     "ios": {
       "supportsTablet": true
@@ -18,10 +19,16 @@
       }
     },
     "web": {
-      "favicon": "./assets/favicon.png"
-    },
-    "plugins": [
-      "expo-asset"
-    ]
+      "favicon": "./assets/favicon.png",
+      "themeColor": "#0E2A4E",
+      "backgroundColor": "#F5F7FA",
+      "display": "standalone",
+      "name": "Ahorrapp",
+      "shortName": "Ahorrapp",
+      "description": "Todos los descuentos y reintegros de los bancos de Paraguay en un solo lugar.",
+      "lang": "es-PY",
+      "startUrl": "/",
+      "orientation": "portrait"
+    }
   }
 }
