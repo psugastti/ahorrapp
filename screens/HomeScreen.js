@@ -1,27 +1,26 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity, StyleSheet,
-  RefreshControl, ActivityIndicator, TextInput,
+  RefreshControl, ActivityIndicator, TextInput, Image,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useFocusEffect } from '@react-navigation/native';
 import { supabase } from '../lib/supabase';
 import { theme } from '../lib/theme';
+import { BancoLogo, TipoBadge } from '../components/ui';
+import {
+  getMisBancos, getMisTarjetas, getFavoritos, toggleFavorito, getPrefs,
+  tarjetaQueAplica, porcentajePersonalizado,
+} from '../lib/storage';
 
 const DIAS = ['domingo', 'lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado'];
 const DIAS_LABEL = { lunes: 'Lun', martes: 'Mar', miercoles: 'Mié', jueves: 'Jue', viernes: 'Vie', sabado: 'Sáb', domingo: 'Dom' };
 const HOY = DIAS[new Date().getDay()];
 
 const FILTROS_DIA = [
-  { id: 'todos', label: 'Todos' },
-  { id: 'hoy', label: 'Hoy' },
-  { id: 'finde', label: 'Finde' },
-  { id: 'lunes', label: 'Lun' },
-  { id: 'martes', label: 'Mar' },
-  { id: 'miercoles', label: 'Mié' },
-  { id: 'jueves', label: 'Jue' },
-  { id: 'viernes', label: 'Vie' },
-  { id: 'sabado', label: 'Sáb' },
-  { id: 'domingo', label: 'Dom' },
+  { id: 'todos', label: 'Todos' }, { id: 'hoy', label: 'Hoy' }, { id: 'finde', label: 'Finde' },
+  { id: 'lunes', label: 'Lun' }, { id: 'martes', label: 'Mar' }, { id: 'miercoles', label: 'Mié' },
+  { id: 'jueves', label: 'Jue' }, { id: 'viernes', label: 'Vie' }, { id: 'sabado', label: 'Sáb' }, { id: 'domingo', label: 'Dom' },
 ];
 
 function saludo() {
@@ -42,10 +41,17 @@ export default function HomeScreen({ navigation }) {
   const [filtroCategoria, setFiltroCategoria] = useState('todas');
   const [filtroBanco, setFiltroBanco] = useState('todos');
 
+  // Personalización (local)
+  const [misBancos, setMisBancos] = useState([]);
+  const [misTarjetas, setMisTarjetas] = useState([]);
+  const [favoritos, setFavoritos] = useState([]);
+  const [soloMisBancos, setSoloMisBancos] = useState(false);
+  const [soloPuedoUsar, setSoloPuedoUsar] = useState(false);
+
   const cargar = useCallback(async () => {
     const [{ data: b }, { data: c }, { data: bcos }] = await Promise.all([
       supabase.from('beneficios')
-        .select('*, bancos(nombre,color,url_web,url_beneficios), categorias(nombre,emoji)')
+        .select('*, bancos(nombre,color,url_web,url_beneficios,logo_url), categorias(nombre,emoji)')
         .eq('activo', true)
         .order('featured', { ascending: false })
         .order('porcentaje', { ascending: false }),
@@ -61,14 +67,24 @@ export default function HomeScreen({ navigation }) {
 
   useEffect(() => { cargar(); }, []);
 
-  const limpiarFiltros = () => { setBusqueda(''); setFiltroDia('todos'); setFiltroCategoria('todas'); setFiltroBanco('todos'); };
+  // Recargar datos locales cada vez que se entra a la pantalla
+  useFocusEffect(useCallback(() => {
+    (async () => {
+      setMisBancos(await getMisBancos());
+      setMisTarjetas(await getMisTarjetas());
+      setFavoritos(await getFavoritos());
+      const p = await getPrefs();
+      setSoloMisBancos(!!p.soloMisBancos);
+    })();
+  }, []));
+
+  const onFav = async (id) => setFavoritos(await toggleFavorito(id));
+
+  const limpiarFiltros = () => { setBusqueda(''); setFiltroDia('todos'); setFiltroCategoria('todas'); setFiltroBanco('todos'); setSoloPuedoUsar(false); };
 
   const filtrados = useMemo(() => beneficios.filter(b => {
     const q = busqueda.trim().toLowerCase();
-    const matchQ = !q
-      || b.comercio?.toLowerCase().includes(q)
-      || b.bancos?.nombre?.toLowerCase().includes(q)
-      || b.categorias?.nombre?.toLowerCase().includes(q);
+    const matchQ = !q || b.comercio?.toLowerCase().includes(q) || b.bancos?.nombre?.toLowerCase().includes(q) || b.categorias?.nombre?.toLowerCase().includes(q);
     const diasMatch = (() => {
       if (filtroDia === 'todos') return true;
       if (b.todos_los_dias) return true;
@@ -78,16 +94,44 @@ export default function HomeScreen({ navigation }) {
     })();
     const catMatch = filtroCategoria === 'todas' || b.categorias?.nombre === filtroCategoria;
     const bancoMatch = filtroBanco === 'todos' || b.banco_id == filtroBanco;
-    return matchQ && diasMatch && catMatch && bancoMatch;
-  }), [beneficios, busqueda, filtroDia, filtroCategoria, filtroBanco]);
+    const misBancosMatch = !soloMisBancos || misBancos.length === 0 || misBancos.includes(b.banco_id);
+    const puedoUsarMatch = !soloPuedoUsar || !!tarjetaQueAplica(b, misTarjetas);
+    return matchQ && diasMatch && catMatch && bancoMatch && misBancosMatch && puedoUsarMatch;
+  }), [beneficios, busqueda, filtroDia, filtroCategoria, filtroBanco, soloMisBancos, soloPuedoUsar, misBancos, misTarjetas]);
 
   const destacados = useMemo(() => beneficios.filter(b => b.porcentaje >= 30).slice(0, 8), [beneficios]);
-  const hoy = new Date().toISOString().slice(0, 10);
-  const hayFiltro = busqueda.trim() || filtroDia !== 'todos' || filtroCategoria !== 'todas' || filtroBanco !== 'todos';
+  const hayFiltro = busqueda.trim() || filtroDia !== 'todos' || filtroCategoria !== 'todas' || filtroBanco !== 'todos' || soloPuedoUsar;
 
-  if (loading) return (
-    <View style={s.centered}><ActivityIndicator size="large" color={theme.colors.primary} /></View>
-  );
+  if (loading) return (<View style={s.centered}><ActivityIndicator size="large" color={theme.colors.primary} /></View>);
+
+  const renderCard = (b) => {
+    const tipo = b.tipo_tarjeta_simple || b.tipo_tarjeta;
+    const aplica = tarjetaQueAplica(b, misTarjetas);
+    const pers = porcentajePersonalizado(b, misTarjetas);
+    const esFav = favoritos.includes(b.id);
+    const pctTxt = pers ? `${pers.porcentaje}%` : (b.porcentaje ? `${b.niveles ? 'Hasta ' : ''}${b.porcentaje}%` : null);
+    return (
+      <TouchableOpacity key={b.id} style={s.card} activeOpacity={0.8} onPress={() => navigation.navigate('Detalle', { beneficio: b })}>
+        <BancoLogo banco={b.bancos} comercio={b.comercio} size={46} />
+        <View style={{ flex: 1 }}>
+          <Text style={s.cardComercio} numberOfLines={1}>{b.comercio}</Text>
+          <Text style={s.cardSub} numberOfLines={1}>{b.bancos?.nombre} · {b.categorias?.emoji} {b.categorias?.nombre}</Text>
+          <View style={s.tags}>
+            <TipoBadge tipo={b.tipo_beneficio} />
+            {aplica ? <View style={s.tagAplica}><Ionicons name="checkmark-circle" size={11} color={theme.colors.success} /><Text style={s.tagAplicaTxt}>Tu tarjeta</Text></View> : null}
+            {b.todos_los_dias ? <View style={s.tag}><Text style={s.tagTxt}>Todos los días</Text></View>
+              : b.dias?.length > 0 ? <View style={s.tag}><Text style={s.tagTxt}>{b.dias.map(d => DIAS_LABEL[d] || d).join(' · ')}</Text></View> : null}
+          </View>
+        </View>
+        <View style={s.cardRight}>
+          <TouchableOpacity hitSlop={8} onPress={() => onFav(b.id)}>
+            <Ionicons name={esFav ? 'heart' : 'heart-outline'} size={20} color={esFav ? theme.colors.danger : theme.colors.textMuted} />
+          </TouchableOpacity>
+          {pctTxt ? <View style={[s.pct, pers && s.pctPers]}><Text style={s.pctTxt}>{pctTxt}</Text></View> : null}
+        </View>
+      </TouchableOpacity>
+    );
+  };
 
   return (
     <ScrollView
@@ -96,26 +140,41 @@ export default function HomeScreen({ navigation }) {
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); cargar(); }} tintColor={theme.colors.primary} />}
       showsVerticalScrollIndicator={false}
     >
-      {/* HEADER */}
+      {/* HEADER con logo */}
       <View style={s.header}>
-        <View>
+        <View style={{ flex: 1 }}>
           <Text style={s.headerGreeting}>{saludo()} 👋</Text>
-          <Text style={s.headerTitle}>Ahorrapp</Text>
+          <Image source={require('../assets/logo.png')} style={s.logo} resizeMode="contain" />
         </View>
       </View>
 
-      {/* BUSCADOR POR COMERCIO */}
+      {/* BUSCADOR */}
       <View style={s.searchBox}>
         <Ionicons name="search-outline" size={18} color={theme.colors.textMuted} />
-        <TextInput
-          style={s.searchInput}
-          placeholder="Buscar comercio, banco o categoría"
-          placeholderTextColor={theme.colors.textMuted}
-          value={busqueda}
-          onChangeText={setBusqueda}
-          returnKeyType="search"
-        />
+        <TextInput style={s.searchInput} placeholder="Buscar comercio, banco o categoría" placeholderTextColor={theme.colors.textMuted} value={busqueda} onChangeText={setBusqueda} returnKeyType="search" />
         {busqueda ? <TouchableOpacity onPress={() => setBusqueda('')}><Ionicons name="close-circle" size={18} color={theme.colors.textMuted} /></TouchableOpacity> : null}
+      </View>
+
+      {/* TOGGLES PERSONALIZACIÓN */}
+      <View style={s.togglesRow}>
+        {misBancos.length > 0 && (
+          <TouchableOpacity style={[s.toggle, soloMisBancos && s.toggleOn]} onPress={() => setSoloMisBancos(v => !v)}>
+            <Ionicons name="business" size={13} color={soloMisBancos ? '#fff' : theme.colors.navy} />
+            <Text style={[s.toggleTxt, soloMisBancos && s.toggleTxtOn]}>Mis bancos</Text>
+          </TouchableOpacity>
+        )}
+        {misTarjetas.length > 0 && (
+          <TouchableOpacity style={[s.toggle, soloPuedoUsar && s.toggleOn]} onPress={() => setSoloPuedoUsar(v => !v)}>
+            <Ionicons name="card" size={13} color={soloPuedoUsar ? '#fff' : theme.colors.navy} />
+            <Text style={[s.toggleTxt, soloPuedoUsar && s.toggleTxtOn]}>Puedo usar</Text>
+          </TouchableOpacity>
+        )}
+        {misBancos.length === 0 && misTarjetas.length === 0 && (
+          <TouchableOpacity style={s.toggleHint} onPress={() => navigation.navigate('Perfil')}>
+            <Ionicons name="sparkles" size={13} color={theme.colors.primaryDark} />
+            <Text style={s.toggleHintTxt}>Configurá tus bancos y tarjetas en Perfil →</Text>
+          </TouchableOpacity>
+        )}
       </View>
 
       {/* HERO */}
@@ -129,10 +188,7 @@ export default function HomeScreen({ navigation }) {
       </View>
 
       {/* SELECTOR DE DÍA */}
-      <View style={s.filtroHead}>
-        <Ionicons name="calendar-outline" size={15} color={theme.colors.textSecondary} />
-        <Text style={s.filtroHeadTxt}>Elegí el día</Text>
-      </View>
+      <View style={s.filtroHead}><Ionicons name="calendar-outline" size={15} color={theme.colors.textSecondary} /><Text style={s.filtroHeadTxt}>Elegí el día</Text></View>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.filtrosScroll} contentContainerStyle={s.filtrosContent}>
         {FILTROS_DIA.map(f => (
           <TouchableOpacity key={f.id} style={[s.chip, filtroDia === f.id && s.chipActive]} onPress={() => setFiltroDia(f.id)}>
@@ -142,10 +198,7 @@ export default function HomeScreen({ navigation }) {
       </ScrollView>
 
       {/* SELECTOR DE BANCO */}
-      <View style={s.filtroHead}>
-        <Ionicons name="business-outline" size={15} color={theme.colors.textSecondary} />
-        <Text style={s.filtroHeadTxt}>Banco</Text>
-      </View>
+      <View style={s.filtroHead}><Ionicons name="business-outline" size={15} color={theme.colors.textSecondary} /><Text style={s.filtroHeadTxt}>Banco</Text></View>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.filtrosScroll} contentContainerStyle={s.filtrosContent}>
         <TouchableOpacity style={[s.chip, filtroBanco === 'todos' && s.chipActive]} onPress={() => setFiltroBanco('todos')}>
           <Text style={[s.chipText, filtroBanco === 'todos' && s.chipTextActive]}>Todos</Text>
@@ -153,11 +206,7 @@ export default function HomeScreen({ navigation }) {
         {bancos.map(bk => {
           const activo = filtroBanco == bk.id;
           return (
-            <TouchableOpacity
-              key={bk.id}
-              style={[s.chip, activo && s.chipActive, activo && bk.color && { backgroundColor: bk.color, borderColor: bk.color }]}
-              onPress={() => setFiltroBanco(activo ? 'todos' : bk.id)}
-            >
+            <TouchableOpacity key={bk.id} style={[s.chip, activo && s.chipActive, activo && bk.color && { backgroundColor: bk.color, borderColor: bk.color }]} onPress={() => setFiltroBanco(activo ? 'todos' : bk.id)}>
               {!activo && <View style={[s.bancoDot, { backgroundColor: bk.color || theme.colors.navy }]} />}
               <Text style={[s.chipText, activo && s.chipTextActive]}>{bk.nombre}</Text>
             </TouchableOpacity>
@@ -165,19 +214,15 @@ export default function HomeScreen({ navigation }) {
         })}
       </ScrollView>
 
-      {/* DESTACADOS (se ocultan al filtrar/buscar) */}
+      {/* DESTACADOS */}
       {!hayFiltro && destacados.length > 0 && (
         <View style={s.section}>
-          <View style={s.sectionHead}>
-            <Text style={s.sectionTitle}>Destacados</Text>
-          </View>
+          <View style={s.sectionHead}><Text style={s.sectionTitle}>Destacados</Text></View>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 12, paddingHorizontal: 16 }}>
             {destacados.map(b => (
               <TouchableOpacity key={b.id} style={s.cardDestacado} activeOpacity={0.85} onPress={() => navigation.navigate('Detalle', { beneficio: b })}>
                 <View style={s.cardDestTop}>
-                  <View style={[s.cardDestLogo, { backgroundColor: (b.bancos?.color || theme.colors.navy) + '18' }]}>
-                    <Text style={[s.cardDestLogoTxt, { color: b.bancos?.color || theme.colors.navy }]}>{(b.comercio || '?').slice(0, 1).toUpperCase()}</Text>
-                  </View>
+                  <BancoLogo banco={b.bancos} comercio={b.comercio} size={40} />
                   <View style={s.pctBadge}><Text style={s.pctBadgeTxt}>{b.porcentaje}%</Text></View>
                 </View>
                 <Text style={s.cardDestComercio} numberOfLines={1}>{b.comercio}</Text>
@@ -190,10 +235,7 @@ export default function HomeScreen({ navigation }) {
       )}
 
       {/* CATEGORÍAS */}
-      <View style={s.filtroHead}>
-        <Ionicons name="grid-outline" size={15} color={theme.colors.textSecondary} />
-        <Text style={s.filtroHeadTxt}>Categorías</Text>
-      </View>
+      <View style={s.filtroHead}><Ionicons name="grid-outline" size={15} color={theme.colors.textSecondary} /><Text style={s.filtroHeadTxt}>Categorías</Text></View>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.filtrosScroll} contentContainerStyle={s.filtrosContent}>
         <TouchableOpacity style={[s.chip, filtroCategoria === 'todas' && s.chipActive]} onPress={() => setFiltroCategoria('todas')}>
           <Text style={[s.chipText, filtroCategoria === 'todas' && s.chipTextActive]}>Todas</Text>
@@ -215,34 +257,10 @@ export default function HomeScreen({ navigation }) {
           {hayFiltro ? <TouchableOpacity onPress={limpiarFiltros}><Text style={s.verTodos}>Limpiar</Text></TouchableOpacity> : null}
         </View>
         {filtrados.length === 0 ? (
-          <View style={s.emptyBox}>
-            <Ionicons name="search-outline" size={40} color={theme.colors.textMuted} />
-            <Text style={s.emptyText}>No hay beneficios para este filtro</Text>
-          </View>
+          <View style={s.emptyBox}><Ionicons name="search-outline" size={40} color={theme.colors.textMuted} /><Text style={s.emptyText}>No hay beneficios para este filtro</Text></View>
         ) : (
           <View style={{ gap: 10, paddingHorizontal: 16, marginTop: 4 }}>
-            {filtrados.slice(0, 60).map(b => {
-              const tipo = b.tipo_tarjeta_simple || b.tipo_tarjeta;
-              return (
-                <TouchableOpacity key={b.id} style={s.card} activeOpacity={0.8} onPress={() => navigation.navigate('Detalle', { beneficio: b })}>
-                  <View style={[s.cardLogo, { backgroundColor: (b.bancos?.color || theme.colors.navy) + '14' }]}>
-                    <Text style={[s.cardLogoTxt, { color: b.bancos?.color || theme.colors.navy }]}>{(b.comercio || '?').slice(0, 1).toUpperCase()}</Text>
-                  </View>
-                  <View style={{ flex: 1 }}>
-                    <Text style={s.cardComercio} numberOfLines={1}>{b.comercio}</Text>
-                    <Text style={s.cardSub} numberOfLines={1}>{b.bancos?.nombre} · {b.categorias?.emoji} {b.categorias?.nombre}</Text>
-                    <View style={s.tags}>
-                      {tipo === 'premium' && <View style={s.tagPremium}><Text style={s.tagPremiumTxt}>★ Premium</Text></View>}
-                      {b.todos_los_dias ? <View style={s.tag}><Text style={s.tagTxt}>Todos los días</Text></View>
-                        : b.dias?.length > 0 ? <View style={s.tag}><Text style={s.tagTxt}>{b.dias.map(d => DIAS_LABEL[d] || d).join(' · ')}</Text></View> : null}
-                      {b.niveles ? <View style={s.tagNivel}><Text style={s.tagNivelTxt}>Por nivel</Text></View> : null}
-                    </View>
-                  </View>
-                  {b.porcentaje ? <View style={s.pct}><Text style={s.pctTxt}>{b.niveles ? 'Hasta ' : ''}{b.porcentaje}%</Text></View>
-                    : <Ionicons name="chevron-forward" size={18} color={theme.colors.textMuted} />}
-                </TouchableOpacity>
-              );
-            })}
+            {filtrados.slice(0, 60).map(renderCard)}
           </View>
         )}
       </View>
@@ -255,12 +273,20 @@ const s = StyleSheet.create({
   container: { flex: 1, backgroundColor: theme.colors.bg },
   centered: { flex: 1, backgroundColor: theme.colors.bg, alignItems: 'center', justifyContent: 'center' },
 
-  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, paddingTop: 60, paddingBottom: 10 },
-  headerGreeting: { color: theme.colors.textSecondary, fontSize: 13, fontWeight: '600' },
-  headerTitle: { color: theme.colors.text, fontSize: 26, fontWeight: '800', letterSpacing: -0.5 },
+  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, paddingTop: 58, paddingBottom: 8 },
+  headerGreeting: { color: theme.colors.textSecondary, fontSize: 13, fontWeight: '600', marginBottom: 2 },
+  logo: { width: 168, height: 42, marginLeft: -4 },
 
-  searchBox: { marginHorizontal: 16, backgroundColor: theme.colors.bgCard, borderRadius: theme.radius.full, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12, borderWidth: 1, borderColor: theme.colors.border, marginBottom: 12 },
+  searchBox: { marginHorizontal: 16, backgroundColor: theme.colors.bgCard, borderRadius: theme.radius.full, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12, borderWidth: 1, borderColor: theme.colors.border, marginBottom: 10 },
   searchInput: { flex: 1, color: theme.colors.text, fontSize: 15, marginLeft: 8 },
+
+  togglesRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, paddingHorizontal: 16, marginBottom: 6 },
+  toggle: { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: theme.colors.bgCard, borderRadius: theme.radius.full, paddingHorizontal: 12, paddingVertical: 7, borderWidth: 1, borderColor: theme.colors.border },
+  toggleOn: { backgroundColor: theme.colors.navy, borderColor: theme.colors.navy },
+  toggleTxt: { color: theme.colors.navy, fontSize: 12, fontWeight: '700' },
+  toggleTxtOn: { color: '#fff' },
+  toggleHint: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: theme.colors.primaryLight, borderRadius: theme.radius.full, paddingHorizontal: 12, paddingVertical: 7 },
+  toggleHintTxt: { color: theme.colors.primaryDark, fontSize: 12, fontWeight: '700' },
 
   hero: { marginHorizontal: 16, backgroundColor: theme.colors.navy, borderRadius: theme.radius.xl, padding: 20, flexDirection: 'row', alignItems: 'center', marginBottom: 8 },
   heroKicker: { color: 'rgba(255,255,255,0.75)', fontSize: 13, fontWeight: '600' },
@@ -286,8 +312,6 @@ const s = StyleSheet.create({
 
   cardDestacado: { width: 168, backgroundColor: theme.colors.bgCard, borderRadius: theme.radius.lg, borderWidth: 1, borderColor: theme.colors.border, padding: 14 },
   cardDestTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 },
-  cardDestLogo: { width: 40, height: 40, borderRadius: 11, alignItems: 'center', justifyContent: 'center' },
-  cardDestLogoTxt: { fontSize: 18, fontWeight: '800' },
   pctBadge: { backgroundColor: theme.colors.primary, borderRadius: theme.radius.sm, paddingHorizontal: 9, paddingVertical: 4 },
   pctBadgeTxt: { color: '#fff', fontWeight: '800', fontSize: 14 },
   cardDestComercio: { color: theme.colors.text, fontSize: 15, fontWeight: '700' },
@@ -295,18 +319,16 @@ const s = StyleSheet.create({
   cardDestCat: { color: theme.colors.textMuted, fontSize: 12, marginTop: 6 },
 
   card: { backgroundColor: theme.colors.bgCard, borderRadius: theme.radius.lg, borderWidth: 1, borderColor: theme.colors.border, flexDirection: 'row', alignItems: 'center', padding: 12, gap: 12 },
-  cardLogo: { width: 46, height: 46, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
-  cardLogoTxt: { fontSize: 20, fontWeight: '800' },
   cardComercio: { color: theme.colors.text, fontSize: 15, fontWeight: '700' },
   cardSub: { color: theme.colors.textSecondary, fontSize: 12, marginTop: 2 },
-  tags: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 6 },
+  tags: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 6, alignItems: 'center' },
   tag: { backgroundColor: theme.colors.bgCardAlt, borderRadius: theme.radius.full, paddingHorizontal: 9, paddingVertical: 3 },
   tagTxt: { color: theme.colors.textSecondary, fontSize: 11, fontWeight: '600' },
-  tagPremium: { backgroundColor: '#FFF4E0', borderRadius: theme.radius.full, paddingHorizontal: 9, paddingVertical: 3 },
-  tagPremiumTxt: { color: '#B7791F', fontSize: 11, fontWeight: '700' },
-  tagNivel: { backgroundColor: theme.colors.primaryLight, borderRadius: theme.radius.full, paddingHorizontal: 9, paddingVertical: 3 },
-  tagNivelTxt: { color: theme.colors.primaryDark, fontSize: 11, fontWeight: '700' },
+  tagAplica: { flexDirection: 'row', alignItems: 'center', gap: 3, backgroundColor: '#E7F8F0', borderRadius: theme.radius.full, paddingHorizontal: 8, paddingVertical: 3 },
+  tagAplicaTxt: { color: theme.colors.success, fontSize: 11, fontWeight: '700' },
+  cardRight: { alignItems: 'center', gap: 8 },
   pct: { backgroundColor: theme.colors.primary, borderRadius: theme.radius.md, paddingHorizontal: 12, paddingVertical: 8, minWidth: 54, alignItems: 'center' },
+  pctPers: { backgroundColor: theme.colors.navy },
   pctTxt: { color: '#fff', fontWeight: '800', fontSize: 16 },
 
   emptyBox: { alignItems: 'center', padding: 40, gap: 12 },
