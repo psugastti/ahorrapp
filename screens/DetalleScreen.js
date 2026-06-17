@@ -7,7 +7,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../lib/supabase';
 import { theme } from '../lib/theme';
 import { BancoLogo, TipoBadge } from '../components/ui';
-import { getFavoritos, toggleFavorito, getMisTarjetas, tarjetaQueAplica, porcentajePersonalizado } from '../lib/storage';
+import { getFavoritos, toggleFavorito, getMisTarjetas, tarjetaQueAplica, porcentajePersonalizado, marcaLabel, nivelLabel } from '../lib/storage';
 
 const DIAS_LABEL = { lunes: 'Lunes', martes: 'Martes', miercoles: 'Miércoles', jueves: 'Jueves', viernes: 'Viernes', sabado: 'Sábado', domingo: 'Domingo' };
 const REPORTE_EMAIL = 'psugastti@gmail.com';
@@ -147,7 +147,7 @@ export default function DetalleScreen({ route, navigation }) {
           <Text style={s.cardTitle}>Detalles del beneficio</Text>
           <InfoRow icon="business-outline" label="Banco" value={b.bancos?.nombre || '—'} tint={color} />
           <View style={s.divider} />
-          <InfoRow icon="card-outline" label="Tarjeta" value={`${tipoLabel[tipo] || 'Crédito y Débito'}`} />
+          <InfoRow icon="card-outline" label="Tarjeta" value={[tipoLabel[tipo] || 'Crédito y Débito', b.marca_tarjeta ? `Solo ${marcaLabel(b.marca_tarjeta)}` : null, b.nivel_min ? `${nivelLabel(b.nivel_min)} o superior` : null].filter(Boolean).join(' · ')} />
           <View style={s.divider} />
           <InfoRow icon="calendar-outline" label="Días válidos" value={b.todos_los_dias ? 'Todos los días' : b.dias?.length > 0 ? b.dias.map(d => DIAS_LABEL[d] || d).join(', ') : 'No especificado'} />
           {b.tope_monto > 0 && (<><View style={s.divider} /><InfoRow icon="arrow-up-circle-outline" label="Tope de reintegro" value={gs(b.tope_monto)} tint={theme.colors.warning} /></>)}

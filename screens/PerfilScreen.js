@@ -7,10 +7,11 @@ import { theme } from '../lib/theme';
 import {
   getMisBancos, setMisBancos, getMisTarjetas, setMisTarjetas,
   getFavoritos, getPrefs, setPrefs,
+  MARCAS, NIVELES_TARJETA, marcaLabel, nivelLabel,
 } from '../lib/storage';
 
 const SUGERENCIAS_EMAIL = 'psugastti@gmail.com';
-const TIPOS = [{ id: 'credito', label: 'Crédito' }, { id: 'debito', label: 'Débito' }, { id: 'premium', label: 'Premium' }];
+const TIPOS = [{ id: 'credito', label: 'Crédito' }, { id: 'debito', label: 'Débito' }];
 const UENO_ID = 4;
 
 export default function PerfilScreen() {
@@ -26,6 +27,8 @@ export default function PerfilScreen() {
   const [addOpen, setAddOpen] = useState(false);
   const [selBanco, setSelBanco] = useState(null);
   const [selTipo, setSelTipo] = useState('credito');
+  const [selMarca, setSelMarca] = useState(null);
+  const [selNivelT, setSelNivelT] = useState(1);
   const [selNivel, setSelNivel] = useState(3);
 
   const cargar = useCallback(async () => {
@@ -53,11 +56,11 @@ export default function PerfilScreen() {
 
   const agregarTarjeta = async () => {
     if (!selBanco) { Alert.alert('Elegí un banco', 'Seleccioná el banco de tu tarjeta.'); return; }
-    const card = { banco_id: selBanco, tipo: selTipo };
+    const card = { banco_id: selBanco, tipo: selTipo, marca: selMarca, nivel: selTipo === 'debito' ? 1 : selNivelT };
     if (selBanco === UENO_ID) card.ueno_nivel = selNivel;
     const next = [...misTarjetas, card];
     setMisT(next); await setMisTarjetas(next);
-    setAddOpen(false); setSelBanco(null); setSelTipo('credito'); setSelNivel(3);
+    setAddOpen(false); setSelBanco(null); setSelTipo('credito'); setSelMarca(null); setSelNivelT(1); setSelNivel(3);
   };
   const quitarTarjeta = async (i) => { const next = misTarjetas.filter((_, idx) => idx !== i); setMisT(next); await setMisTarjetas(next); };
 
@@ -131,8 +134,12 @@ export default function PerfilScreen() {
           <View key={i} style={s.tarjetaItem}>
             <View style={[s.tarjetaDot, { backgroundColor: bancoColor(t.banco_id) }]} />
             <View style={{ flex: 1 }}>
-              <Text style={s.tarjetaBanco}>{bancoNombre(t.banco_id)}</Text>
-              <Text style={s.tarjetaTipo}>{TIPOS.find(x => x.id === t.tipo)?.label || t.tipo}{t.ueno_nivel ? ` · Nivel ${t.ueno_nivel}` : ''}</Text>
+              <Text style={s.tarjetaBanco}>{bancoNombre(t.banco_id)}{t.marca ? ` · ${marcaLabel(t.marca)}` : ''}</Text>
+              <Text style={s.tarjetaTipo}>
+                {TIPOS.find(x => x.id === t.tipo)?.label || (t.tipo === 'premium' ? 'Crédito' : t.tipo)}
+                {t.tipo !== 'debito' && (t.nivel > 1 || t.tipo === 'premium') ? ` · ${nivelLabel(t.nivel || 4)}` : ''}
+                {t.ueno_nivel ? ` · ueno+ N${t.ueno_nivel}` : ''}
+              </Text>
             </View>
             <TouchableOpacity hitSlop={8} onPress={() => quitarTarjeta(i)}><Ionicons name="trash-outline" size={18} color={theme.colors.danger} /></TouchableOpacity>
           </View>
@@ -161,6 +168,29 @@ export default function PerfilScreen() {
                 </TouchableOpacity>
               ))}
             </View>
+            <Text style={s.addLabel}>Marca (opcional)</Text>
+            <View style={s.wrapRow}>
+              <TouchableOpacity style={[s.miniChip, selMarca === null && s.miniChipOn]} onPress={() => setSelMarca(null)}>
+                <Text style={[s.miniChipTxt, selMarca === null && s.miniChipTxtOn]}>Cualquiera</Text>
+              </TouchableOpacity>
+              {MARCAS.map(m => (
+                <TouchableOpacity key={m.id} style={[s.miniChip, selMarca === m.id && s.miniChipOn]} onPress={() => setSelMarca(m.id)}>
+                  <Text style={[s.miniChipTxt, selMarca === m.id && s.miniChipTxtOn]}>{m.label}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+            {selTipo !== 'debito' && (
+              <>
+                <Text style={s.addLabel}>Nivel de tarjeta</Text>
+                <View style={s.wrapRow}>
+                  {NIVELES_TARJETA.map(n => (
+                    <TouchableOpacity key={n.id} style={[s.miniChip, selNivelT === n.id && s.miniChipOn]} onPress={() => setSelNivelT(n.id)}>
+                      <Text style={[s.miniChipTxt, selNivelT === n.id && s.miniChipTxtOn]}>{n.label}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </>
+            )}
             {selBanco === UENO_ID && (
               <>
                 <Text style={s.addLabel}>Tu nivel ueno+</Text>
@@ -193,7 +223,7 @@ export default function PerfilScreen() {
           <MenuItem icon="information-circle-outline" label="¿Cómo funciona?" onPress={comoFunciona} />
           <MenuItem icon="shield-checkmark-outline" label="Privacidad" color={theme.colors.success} onPress={privacidad} />
           <MenuItem icon="chatbubble-outline" label="Sugerencias" color={theme.colors.navy} onPress={sugerencias} />
-          <MenuItem icon="star-outline" label="Versión" value="3.0.0" color={theme.colors.warning} last />
+          <MenuItem icon="star-outline" label="Versión" value="3.1.0" color={theme.colors.warning} last />
         </View>
       </View>
     </ScrollView>
