@@ -9,6 +9,7 @@ import { supabase } from '../lib/supabase';
 import { theme } from '../lib/theme';
 import { BancoLogo } from '../components/ui';
 import { getMisBancos, getMisTarjetas, getPrefs, tarjetaQueAplica } from '../lib/storage';
+import { chequearAvisoDiario } from '../lib/notifications';
 
 const DIAS = ['domingo', 'lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado'];
 const HOY = DIAS[new Date().getDay()];
@@ -58,6 +59,7 @@ export default function HomeScreen({ navigation }) {
   const [misTarjetas, setMisTarjetas] = useState([]);
   const [soloMisBancos, setSoloMisBancos] = useState(false);
   const [soloPuedoUsar, setSoloPuedoUsar] = useState(false);
+  const [aviso, setAviso] = useState(null);
 
   const cargar = useCallback(async () => {
     let all = [], from = 0; const size = 1000;
@@ -80,6 +82,7 @@ export default function HomeScreen({ navigation }) {
       setMisBancos(await getMisBancos());
       setMisTarjetas(await getMisTarjetas());
       const p = await getPrefs(); setSoloMisBancos(!!p.soloMisBancos);
+      try { const r = await chequearAvisoDiario(); if (r.mostrar) setAviso(r); } catch {}
     })();
   }, []));
 
@@ -177,6 +180,17 @@ export default function HomeScreen({ navigation }) {
         <TextInput style={s.searchInput} placeholder="Buscar comercio, banco o categoría" placeholderTextColor={theme.colors.textMuted} value={busqueda} onChangeText={setBusqueda} returnKeyType="search" />
         {busqueda ? <TouchableOpacity onPress={() => setBusqueda('')}><Ionicons name="close-circle" size={18} color={theme.colors.textMuted} /></TouchableOpacity> : null}
       </View>
+
+      {aviso && (
+        <TouchableOpacity style={s.avisoBanner} activeOpacity={0.85} onPress={() => { setDiasSel(['hoy']); setAviso(null); }}>
+          <View style={s.avisoIcon}><Ionicons name="notifications" size={18} color="#fff" /></View>
+          <View style={{ flex: 1 }}>
+            <Text style={s.avisoTitulo}>Descuentos de hoy</Text>
+            <Text style={s.avisoCuerpo} numberOfLines={1}>{aviso.cuerpo}</Text>
+          </View>
+          <TouchableOpacity hitSlop={10} onPress={() => setAviso(null)}><Ionicons name="close" size={18} color={theme.colors.textMuted} /></TouchableOpacity>
+        </TouchableOpacity>
+      )}
 
       <View style={s.togglesRow}>
         {misBancos.length > 0 && (
@@ -322,6 +336,11 @@ const s = StyleSheet.create({
 
   searchBox: { marginHorizontal: 16, backgroundColor: theme.colors.bgCard, borderRadius: theme.radius.full, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12, borderWidth: 1, borderColor: theme.colors.border, marginBottom: 10 },
   searchInput: { flex: 1, color: theme.colors.text, fontSize: 15, marginLeft: 8 },
+
+  avisoBanner: { marginHorizontal: 16, marginBottom: 8, backgroundColor: theme.colors.primaryLight, borderRadius: theme.radius.lg, borderWidth: 1, borderColor: theme.colors.primary + '40', flexDirection: 'row', alignItems: 'center', gap: 12, padding: 12 },
+  avisoIcon: { width: 36, height: 36, borderRadius: 10, backgroundColor: theme.colors.primary, alignItems: 'center', justifyContent: 'center' },
+  avisoTitulo: { color: theme.colors.primaryDark, fontSize: 13, fontWeight: '800' },
+  avisoCuerpo: { color: theme.colors.text, fontSize: 13, marginTop: 1 },
 
   togglesRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, paddingHorizontal: 16, marginBottom: 6 },
   toggle: { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: theme.colors.bgCard, borderRadius: theme.radius.full, paddingHorizontal: 12, paddingVertical: 7, borderWidth: 1, borderColor: theme.colors.border },

@@ -9,10 +9,12 @@ import {
   getFavoritos, getPrefs, setPrefs,
   MARCAS, NIVELES_TARJETA, marcaLabel, nivelLabel,
 } from '../lib/storage';
+import { pedirPermisoNotif, permisoNotif, chequearAvisoDiario } from '../lib/notifications';
 
 const SUGERENCIAS_EMAIL = 'psugastti@gmail.com';
 const TIPOS = [{ id: 'credito', label: 'Crédito' }, { id: 'debito', label: 'Débito' }];
 const UENO_ID = 4;
+const HORAS = [8, 9, 10, 12, 18, 20];
 
 export default function PerfilScreen() {
   const [bancos, setBancos] = useState([]);
@@ -79,9 +81,17 @@ export default function PerfilScreen() {
   const comoFunciona = () => Alert.alert('¿Cómo funciona Ahorrapp?', 'Reunimos los descuentos y reintegros de los bancos de Paraguay. Cargá tus bancos y tarjetas para ver con cuál te conviene pagar, buscá por comercio, elegí el día y guardá favoritos. Si algo está desactualizado, usá "Reportar" dentro del beneficio.');
   const privacidad = () => Alert.alert('Privacidad', 'Tus bancos, tarjetas y favoritos se guardan solo en tu dispositivo. No pedimos datos personales ni de tus tarjetas reales (solo banco y tipo). Los reportes se usan para corregir información.');
   const sugerencias = () => Linking.openURL(`mailto:${SUGERENCIAS_EMAIL}?subject=${encodeURIComponent('Sugerencia para Ahorrapp')}`).catch(() => Alert.alert('Escribinos', `Mandá tu sugerencia a ${SUGERENCIAS_EMAIL}`));
-  const toggleNotif = (v) => {
-    guardarPref('notifDiarias', v);
-    if (v) Alert.alert('Notificaciones diarias', 'Quedó activado. En la versión web te avisamos al abrir la app; las notificaciones que llegan con la app cerrada se activan en la versión para iOS/Android.');
+  const toggleNotif = async (v) => {
+    if (!v) { await guardarPref('notifDiarias', false); return; }
+    const perm = await pedirPermisoNotif();
+    await guardarPref('notifDiarias', true);
+    if (perm === 'granted') Alert.alert('¡Activado!', 'Cuando abras la app a la hora elegida te vamos a recordar los descuentos del día. En la versión iOS/Android el aviso llegará aunque tengas la app cerrada.');
+    else if (perm === 'denied') Alert.alert('Permiso bloqueado', 'El navegador tiene bloqueadas las notificaciones de Ahorrapp. Igual vas a ver el recordatorio dentro de la app. Podés desbloquearlo desde el candado en la barra de direcciones.');
+    else Alert.alert('Aviso activado', 'Te mostraremos los descuentos del día al abrir la app a la hora elegida.');
+  };
+  const probarAviso = async () => {
+    const r = await chequearAvisoDiario(true);
+    Alert.alert('Así se ve tu aviso', r.cuerpo + (permisoNotif() === 'granted' ? '\n\n(También te llegó como notificación del navegador)' : ''));
   };
 
   if (loading) return (<View style={s.centered}><ActivityIndicator size="large" color={theme.colors.primary} /></View>);
@@ -220,6 +230,23 @@ export default function PerfilScreen() {
             <Text style={s.menuLabel}>Aviso de beneficios del día</Text>
             <Switch value={!!prefs.notifDiarias} onValueChange={toggleNotif} trackColor={{ true: theme.colors.primary }} />
           </View>
+          {prefs.notifDiarias && (
+            <View style={[s.menuItem, s.menuDivider, { flexDirection: 'column', alignItems: 'stretch', gap: 10 }]}>
+              <Text style={s.notifHoraLabel}>¿A qué hora querés el recordatorio?</Text>
+              <View style={s.wrapRow}>
+                {HORAS.map(h => (
+                  <TouchableOpacity key={h} style={[s.miniChip, (prefs.notifHora ?? 10) === h && s.miniChipOn]} onPress={() => guardarPref('notifHora', h)}>
+                    <Text style={[s.miniChipTxt, (prefs.notifHora ?? 10) === h && s.miniChipTxtOn]}>{h}:00</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+              <TouchableOpacity style={s.probarBtn} onPress={probarAviso}>
+                <Ionicons name="paper-plane-outline" size={15} color={theme.colors.navy} />
+                <Text style={s.probarBtnTxt}>Probar aviso ahora</Text>
+              </TouchableOpacity>
+              <Text style={s.notifNota}>En web el aviso aparece al abrir la app a esa hora. Con la app cerrada llegará en la versión iOS/Android.</Text>
+            </View>
+          )}
           <MenuItem icon="information-circle-outline" label="¿Cómo funciona?" onPress={comoFunciona} />
           <MenuItem icon="shield-checkmark-outline" label="Privacidad" color={theme.colors.success} onPress={privacidad} />
           <MenuItem icon="chatbubble-outline" label="Sugerencias" color={theme.colors.navy} onPress={sugerencias} />
@@ -282,4 +309,8 @@ const s = StyleSheet.create({
   menuIcon: { width: 36, height: 36, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
   menuLabel: { flex: 1, color: theme.colors.text, fontSize: 14, fontWeight: '600' },
   menuValue: { color: theme.colors.textSecondary, fontSize: 13 },
+  notifHoraLabel: { color: theme.colors.text, fontSize: 13, fontWeight: '700' },
+  notifNota: { color: theme.colors.textMuted, fontSize: 11, lineHeight: 16 },
+  probarBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: theme.colors.bgCardAlt, borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.colors.border, paddingVertical: 10, alignSelf: 'flex-start', paddingHorizontal: 14 },
+  probarBtnTxt: { color: theme.colors.navy, fontSize: 13, fontWeight: '700' },
 });
