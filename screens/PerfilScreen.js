@@ -11,7 +11,7 @@ import {
 } from '../lib/storage';
 import { pedirPermisoNotif, permisoNotif, chequearAvisoDiario } from '../lib/notifications';
 
-const SUGERENCIAS_EMAIL = 'psugastti@gmail.com';
+const SUGERENCIAS_EMAIL = 'ahorrapp.py@gmail.com';
 const TIPOS = [{ id: 'credito', label: 'Crédito' }, { id: 'debito', label: 'Débito' }];
 const UENO_ID = 4;
 const HORAS = [8, 9, 10, 12, 18, 20];

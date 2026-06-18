@@ -10,7 +10,7 @@ import { BancoLogo, TipoBadge } from '../components/ui';
 import { getFavoritos, toggleFavorito, getMisTarjetas, tarjetaQueAplica, porcentajePersonalizado, marcaLabel, nivelLabel } from '../lib/storage';
 
 const DIAS_LABEL = { lunes: 'Lunes', martes: 'Martes', miercoles: 'Miércoles', jueves: 'Jueves', viernes: 'Viernes', sabado: 'Sábado', domingo: 'Domingo' };
-const REPORTE_EMAIL = 'psugastti@gmail.com';
+const REPORTE_EMAIL = 'ahorrapp.py@gmail.com';
 const MOTIVOS = ['% incorrecto', 'Días incorrectos', 'Beneficio vencido', 'Comercio equivocado', 'Otro'];
 const gs = (n) => 'Gs. ' + Number(n).toLocaleString('es-PY');
 const fecha = (d) => { try { return new Date(d + 'T00:00:00').toLocaleDateString('es-PY', { day: '2-digit', month: 'short', year: 'numeric' }); } catch { return d; } };
