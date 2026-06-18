@@ -8,7 +8,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import { supabase } from '../lib/supabase';
 import { theme } from '../lib/theme';
 import { BancoLogo } from '../components/ui';
-import { getMisTarjetas, tarjetaQueAplica, porcentajePersonalizado, calcularAhorro } from '../lib/storage';
+import { getMisTarjetas, tarjetaQueAplica, porcentajePersonalizado, calcularAhorro, marcaLabel } from '../lib/storage';
 
 const gs = (n) => 'Gs. ' + Number(n || 0).toLocaleString('es-PY');
 const soloNum = (s) => (s || '').replace(/[^0-9]/g, '');
@@ -21,10 +21,25 @@ export default function CalculadoraScreen({ navigation }) {
   const [loadingItems, setLoadingItems] = useState(false);
   const [montoStr, setMontoStr] = useState('');
   const [misTarjetas, setMisTarjetas] = useState([]);
+  const [bancos, setBancos] = useState([]);
+  const [tarjetaSel, setTarjetaSel] = useState(0); // índice en misTarjetas; null = "ver todas"
 
   const monto = Number(soloNum(montoStr)) || 0;
 
-  useFocusEffect(useCallback(() => { (async () => setMisTarjetas(await getMisTarjetas()))(); }, []));
+  useFocusEffect(useCallback(() => {
+    (async () => {
+      const tj = await getMisTarjetas();
+      setMisTarjetas(tj);
+      setTarjetaSel(tj.length > 0 ? 0 : null);
+      const { data } = await supabase.from('bancos').select('id,nombre,color').eq('activo', true);
+      setBancos(data || []);
+    })();
+  }, []));
+
+  const bancoNombre = (id) => bancos.find(b => b.id === id)?.nombre || 'Banco';
+  const tarjetaLabel = (t) => `${bancoNombre(t.banco_id)} · ${t.tipo === 'debito' ? 'Débito' : 'Crédito'}${t.marca ? ' ' + marcaLabel(t.marca) : ''}`;
+  const cardActiva = tarjetaSel != null ? misTarjetas[tarjetaSel] : null;
+  const cardsParaMatch = cardActiva ? [cardActiva] : misTarjetas;
 
   // Autocompletado de comercios
   useEffect(() => {
@@ -52,9 +67,9 @@ export default function CalculadoraScreen({ navigation }) {
 
   const reset = () => { setComercio(null); setQ(''); setItems([]); setSugerencias([]); };
 
-  // % efectivo según la tarjeta del usuario (ej. nivel ueno)
+  // % efectivo según la tarjeta activa (ej. nivel ueno)
   const pctEfectivo = (b) => {
-    const pers = porcentajePersonalizado(b, misTarjetas);
+    const pers = porcentajePersonalizado(b, cardsParaMatch);
     return pers ? pers.porcentaje : (b.porcentaje || 0);
   };
 
@@ -62,19 +77,18 @@ export default function CalculadoraScreen({ navigation }) {
     return items.map(b => {
       const pct = pctEfectivo(b);
       const calc = calcularAhorro(b, monto, pct);
-      const aplica = !!tarjetaQueAplica(b, misTarjetas);
+      const aplica = !!tarjetaQueAplica(b, cardsParaMatch);
       return { b, ...calc, aplica };
     }).sort((a, b) => {
-      // primero los que aplican a tu tarjeta, luego por ahorro
       if (a.aplica !== b.aplica) return a.aplica ? -1 : 1;
       return b.ahorro - a.ahorro;
     });
-  }, [items, monto, misTarjetas]);
+  }, [items, monto, misTarjetas, tarjetaSel, bancos]);
 
-  const mejor = useMemo(() => {
-    const conAhorro = resultados.filter(r => r.aplica && r.ahorro > 0);
-    return conAhorro[0] || resultados.filter(r => r.ahorro > 0)[0] || null;
-  }, [resultados]);
+  // Mejor opción que SÍ podés usar con la tarjeta elegida
+  const mejorAplica = useMemo(() => resultados.find(r => r.aplica && r.ahorro > 0) || null, [resultados]);
+  const mejorGeneral = useMemo(() => resultados.find(r => r.ahorro > 0) || null, [resultados]);
+  const mejor = mejorAplica || mejorGeneral;
 
   return (
     <View style={s.container}>
@@ -126,6 +140,24 @@ export default function CalculadoraScreen({ navigation }) {
           />
         </View>
 
+        {/* PASO 3: TARJETA */}
+        {misTarjetas.length > 0 && (
+          <>
+            <Text style={s.label}>3 · ¿Con qué tarjeta vas a pagar?</Text>
+            <View style={s.tarjetasRow}>
+              {misTarjetas.map((t, i) => (
+                <TouchableOpacity key={i} style={[s.tjChip, tarjetaSel === i && s.tjChipOn]} onPress={() => setTarjetaSel(i)}>
+                  <Ionicons name="card" size={13} color={tarjetaSel === i ? '#fff' : theme.colors.navy} />
+                  <Text style={[s.tjChipTxt, tarjetaSel === i && s.tjChipTxtOn]} numberOfLines={1}>{tarjetaLabel(t)}</Text>
+                </TouchableOpacity>
+              ))}
+              <TouchableOpacity style={[s.tjChip, tarjetaSel === null && s.tjChipOn]} onPress={() => setTarjetaSel(null)}>
+                <Text style={[s.tjChipTxt, tarjetaSel === null && s.tjChipTxtOn]}>Comparar todas</Text>
+              </TouchableOpacity>
+            </View>
+          </>
+        )}
+
         {/* RESULTADOS */}
         {comercio && (
           loadingItems ? (
@@ -134,16 +166,21 @@ export default function CalculadoraScreen({ navigation }) {
             <View style={s.hintBox}><Ionicons name="calculator-outline" size={20} color={theme.colors.textMuted} /><Text style={s.hintTxt}>Ingresá el monto para ver tu ahorro.</Text></View>
           ) : (
             <>
-              {mejor && (
+              {cardActiva && !mejorAplica ? (
+                <View style={s.noAplicaCard}>
+                  <Ionicons name="information-circle" size={20} color={theme.colors.warning} />
+                  <Text style={s.noAplicaTxt}>Con tu {tarjetaLabel(cardActiva)} no hay descuento en {comercio}.{mejorGeneral ? ` La mejor acá es ${mejorGeneral.b.bancos?.nombre} (${mejorGeneral.pct}%) — mirá abajo.` : ''}</Text>
+                </View>
+              ) : mejor ? (
                 <View style={s.bestCard}>
-                  <Text style={s.bestKicker}>{mejor.aplica ? '✓ Con tu tarjeta, lo mejor es' : 'Lo mejor para este comercio'}</Text>
+                  <Text style={s.bestKicker}>{cardActiva ? `✓ Pagando con tu ${tarjetaLabel(cardActiva)}` : (mejor.aplica ? '✓ Con tu tarjeta, lo mejor es' : 'Lo mejor para este comercio')}</Text>
                   <Text style={s.bestBanco}>{mejor.b.bancos?.nombre}</Text>
                   <Text style={s.bestAhorro}>Recuperás {gs(mejor.ahorro)}</Text>
                   <Text style={s.bestSub}>pagando {gs(monto)} · {mejor.pct}% {mejor.topeAplicado ? '(tope aplicado)' : ''}</Text>
                 </View>
-              )}
+              ) : null}
 
-              <Text style={s.label}>Todas las opciones</Text>
+              <Text style={s.label}>{cardActiva ? 'Comparar con otras tarjetas' : 'Todas las opciones'}</Text>
               <View style={{ gap: 10, paddingHorizontal: 16 }}>
                 {resultados.map(({ b, ahorro, pct, aplica, motivo, topeAplicado, faltante }) => (
                   <View key={b.id} style={[s.resCard, aplica && s.resCardAplica]}>
@@ -203,6 +240,15 @@ const s = StyleSheet.create({
 
   hintBox: { flexDirection: 'row', alignItems: 'center', gap: 10, justifyContent: 'center', marginTop: 30, paddingHorizontal: 20 },
   hintTxt: { color: theme.colors.textMuted, fontSize: 14, textAlign: 'center' },
+
+  tarjetasRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, paddingHorizontal: 16 },
+  tjChip: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: theme.colors.bgCard, borderRadius: theme.radius.full, paddingHorizontal: 13, paddingVertical: 9, borderWidth: 1, borderColor: theme.colors.border, maxWidth: '100%' },
+  tjChipOn: { backgroundColor: theme.colors.navy, borderColor: theme.colors.navy },
+  tjChipTxt: { color: theme.colors.navy, fontSize: 12, fontWeight: '700', flexShrink: 1 },
+  tjChipTxtOn: { color: '#fff' },
+
+  noAplicaCard: { marginHorizontal: 16, marginTop: 16, backgroundColor: '#FFF8EC', borderRadius: theme.radius.lg, borderWidth: 1, borderColor: '#F5E3C2', flexDirection: 'row', alignItems: 'center', gap: 10, padding: 14 },
+  noAplicaTxt: { flex: 1, color: '#8A6D3B', fontSize: 13, fontWeight: '600', lineHeight: 19 },
 
   bestCard: { marginHorizontal: 16, marginTop: 16, backgroundColor: theme.colors.navy, borderRadius: theme.radius.xl, padding: 20 },
   bestKicker: { color: 'rgba(255,255,255,0.8)', fontSize: 13, fontWeight: '700' },
