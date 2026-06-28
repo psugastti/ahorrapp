@@ -10,6 +10,7 @@ import {
   MARCAS, NIVELES_TARJETA, marcaLabel, nivelLabel,
 } from '../lib/storage';
 import { pedirPermisoNotif, permisoNotif, chequearAvisoDiario } from '../lib/notifications';
+import { abrirMail } from '../lib/links';
 
 const SUGERENCIAS_EMAIL = 'ahorrapp.py@gmail.com';
 const TIPOS = [{ id: 'credito', label: 'Crédito' }, { id: 'debito', label: 'Débito' }];
@@ -36,7 +37,7 @@ export default function PerfilScreen() {
   const cargar = useCallback(async () => {
     const [{ data: bcos }, { count: nBen }, { count: nCat }] = await Promise.all([
       supabase.from('bancos').select('*').eq('activo', true).order('nombre'),
-      supabase.from('beneficios').select('*', { count: 'exact', head: true }).eq('activo', true),
+      supabase.from('beneficios').select('*', { count: 'exact', head: true }).eq('activo', true).or(`vence.is.null,vence.gte.${new Date().toISOString().slice(0, 10)}`),
       supabase.from('categorias').select('*', { count: 'exact', head: true }).eq('is_active', true),
     ]);
     setBancos(bcos || []);
@@ -80,7 +81,7 @@ export default function PerfilScreen() {
 
   const comoFunciona = () => Alert.alert('¿Cómo funciona Ahorrapp?', 'Reunimos los descuentos y reintegros de los bancos de Paraguay. Cargá tus bancos y tarjetas para ver con cuál te conviene pagar, buscá por comercio, elegí el día y guardá favoritos. Si algo está desactualizado, usá "Reportar" dentro del beneficio.');
   const privacidad = () => Alert.alert('Privacidad', 'Tus bancos, tarjetas y favoritos se guardan solo en tu dispositivo. No pedimos datos personales ni de tus tarjetas reales (solo banco y tipo). Los reportes se usan para corregir información.');
-  const sugerencias = () => Linking.openURL(`mailto:${SUGERENCIAS_EMAIL}?subject=${encodeURIComponent('Sugerencia para Ahorrapp')}`).catch(() => Alert.alert('Escribinos', `Mandá tu sugerencia a ${SUGERENCIAS_EMAIL}`));
+  const sugerencias = () => abrirMail(`mailto:${SUGERENCIAS_EMAIL}?subject=${encodeURIComponent('Sugerencia para Ahorrapp')}`);
   const toggleNotif = async (v) => {
     if (!v) { await guardarPref('notifDiarias', false); return; }
     const perm = await pedirPermisoNotif();

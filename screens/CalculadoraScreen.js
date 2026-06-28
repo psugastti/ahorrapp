@@ -12,6 +12,8 @@ import { getMisTarjetas, tarjetaQueAplica, porcentajePersonalizado, calcularAhor
 
 const gs = (n) => 'Gs. ' + Number(n || 0).toLocaleString('es-PY');
 const soloNum = (s) => (s || '').replace(/[^0-9]/g, '');
+const UENO_ID = 4;
+const TIPOS = [{ id: 'credito', label: 'Crédito' }, { id: 'debito', label: 'Débito' }];
 
 export default function CalculadoraScreen({ navigation }) {
   const [q, setQ] = useState('');
@@ -22,7 +24,11 @@ export default function CalculadoraScreen({ navigation }) {
   const [montoStr, setMontoStr] = useState('');
   const [misTarjetas, setMisTarjetas] = useState([]);
   const [bancos, setBancos] = useState([]);
-  const [tarjetaSel, setTarjetaSel] = useState(0); // índice en misTarjetas; null = "ver todas"
+  const [tarjetaSel, setTarjetaSel] = useState(0); // índice en misTarjetas | 'otra' | null ("comparar todas")
+  // Tarjeta armada en el momento (cuando no tenés guardadas o querés probar otra)
+  const [tcBanco, setTcBanco] = useState(null);
+  const [tcTipo, setTcTipo] = useState('credito');
+  const [tcUeno, setTcUeno] = useState(3);
 
   const monto = Number(soloNum(montoStr)) || 0;
 
@@ -30,15 +36,25 @@ export default function CalculadoraScreen({ navigation }) {
     (async () => {
       const tj = await getMisTarjetas();
       setMisTarjetas(tj);
-      setTarjetaSel(tj.length > 0 ? 0 : null);
-      const { data } = await supabase.from('bancos').select('id,nombre,color').eq('activo', true);
+      setTarjetaSel(tj.length > 0 ? 0 : 'otra');
+      const { data } = await supabase.from('bancos').select('id,nombre,color').eq('activo', true).order('nombre');
       setBancos(data || []);
     })();
   }, []));
 
   const bancoNombre = (id) => bancos.find(b => b.id === id)?.nombre || 'Banco';
   const tarjetaLabel = (t) => `${bancoNombre(t.banco_id)} · ${t.tipo === 'debito' ? 'Débito' : 'Crédito'}${t.marca ? ' ' + marcaLabel(t.marca) : ''}`;
-  const cardActiva = tarjetaSel != null ? misTarjetas[tarjetaSel] : null;
+
+  // Bancos disponibles para la tarjeta inline (los del comercio si ya se eligió; si no, todos)
+  const bancosOpciones = useMemo(() => {
+    const delComercio = [...new Map(items.filter(b => b.bancos).map(b => [b.banco_id, b.bancos.nombre])).entries()].map(([id, nombre]) => ({ id, nombre }));
+    return delComercio.length ? delComercio : bancos.map(b => ({ id: b.id, nombre: b.nombre }));
+  }, [items, bancos]);
+
+  const tempCard = tcBanco != null
+    ? { banco_id: tcBanco, tipo: tcTipo, nivel: 1, ...(tcBanco === UENO_ID ? { ueno_nivel: tcUeno } : {}) }
+    : null;
+  const cardActiva = tarjetaSel === 'otra' ? tempCard : (typeof tarjetaSel === 'number' ? misTarjetas[tarjetaSel] : null);
   const cardsParaMatch = cardActiva ? [cardActiva] : misTarjetas;
 
   // Autocompletado de comercios
@@ -47,7 +63,7 @@ export default function CalculadoraScreen({ navigation }) {
     if (comercio || t.length < 2) { setSugerencias([]); return; }
     let cancel = false;
     const id = setTimeout(async () => {
-      const { data } = await supabase.from('beneficios').select('comercio').eq('activo', true).ilike('comercio', `%${t}%`).limit(60);
+      const { data } = await supabase.from('beneficios').select('comercio').eq('activo', true).or(`vence.is.null,vence.gte.${new Date().toISOString().slice(0, 10)}`).ilike('comercio', `%${t}%`).limit(60);
       if (cancel) return;
       const uniq = [...new Set((data || []).map(d => d.comercio))].slice(0, 12);
       setSugerencias(uniq);
@@ -61,6 +77,7 @@ export default function CalculadoraScreen({ navigation }) {
     const { data } = await supabase.from('beneficios')
       .select('*, bancos(nombre,color,logo_url)')
       .eq('comercio', nombre).eq('activo', true)
+      .or(`vence.is.null,vence.gte.${new Date().toISOString().slice(0, 10)}`)
       .order('porcentaje', { ascending: false });
     setItems(data || []); setLoadingItems(false);
   };
@@ -141,21 +158,55 @@ export default function CalculadoraScreen({ navigation }) {
         </View>
 
         {/* PASO 3: TARJETA */}
-        {misTarjetas.length > 0 && (
-          <>
-            <Text style={s.label}>3 · ¿Con qué tarjeta vas a pagar?</Text>
-            <View style={s.tarjetasRow}>
-              {misTarjetas.map((t, i) => (
-                <TouchableOpacity key={i} style={[s.tjChip, tarjetaSel === i && s.tjChipOn]} onPress={() => setTarjetaSel(i)}>
-                  <Ionicons name="card" size={13} color={tarjetaSel === i ? '#fff' : theme.colors.navy} />
-                  <Text style={[s.tjChipTxt, tarjetaSel === i && s.tjChipTxtOn]} numberOfLines={1}>{tarjetaLabel(t)}</Text>
+        <Text style={s.label}>3 · ¿Con qué tarjeta vas a pagar?</Text>
+        <View style={s.tarjetasRow}>
+          {misTarjetas.map((t, i) => (
+            <TouchableOpacity key={i} style={[s.tjChip, tarjetaSel === i && s.tjChipOn]} onPress={() => setTarjetaSel(i)}>
+              <Ionicons name="card" size={13} color={tarjetaSel === i ? '#fff' : theme.colors.navy} />
+              <Text style={[s.tjChipTxt, tarjetaSel === i && s.tjChipTxtOn]} numberOfLines={1}>{tarjetaLabel(t)}</Text>
+            </TouchableOpacity>
+          ))}
+          <TouchableOpacity style={[s.tjChip, tarjetaSel === 'otra' && s.tjChipOn]} onPress={() => setTarjetaSel('otra')}>
+            <Ionicons name="add" size={13} color={tarjetaSel === 'otra' ? '#fff' : theme.colors.navy} />
+            <Text style={[s.tjChipTxt, tarjetaSel === 'otra' && s.tjChipTxtOn]}>{misTarjetas.length ? 'Otra tarjeta' : 'Elegir tarjeta'}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={[s.tjChip, tarjetaSel === null && s.tjChipOn]} onPress={() => setTarjetaSel(null)}>
+            <Text style={[s.tjChipTxt, tarjetaSel === null && s.tjChipTxtOn]}>Comparar todas</Text>
+          </TouchableOpacity>
+        </View>
+
+        {tarjetaSel === 'otra' && (
+          <View style={s.inlineCard}>
+            <Text style={s.inlineLabel}>Banco</Text>
+            <View style={s.wrapRow}>
+              {bancosOpciones.map(b => (
+                <TouchableOpacity key={b.id} style={[s.miniChip, tcBanco === b.id && s.miniChipOn]} onPress={() => setTcBanco(b.id)}>
+                  <Text style={[s.miniChipTxt, tcBanco === b.id && s.miniChipTxtOn]}>{b.nombre}</Text>
                 </TouchableOpacity>
               ))}
-              <TouchableOpacity style={[s.tjChip, tarjetaSel === null && s.tjChipOn]} onPress={() => setTarjetaSel(null)}>
-                <Text style={[s.tjChipTxt, tarjetaSel === null && s.tjChipTxtOn]}>Comparar todas</Text>
-              </TouchableOpacity>
             </View>
-          </>
+            <Text style={s.inlineLabel}>Tipo</Text>
+            <View style={s.wrapRow}>
+              {TIPOS.map(t => (
+                <TouchableOpacity key={t.id} style={[s.miniChip, tcTipo === t.id && s.miniChipOn]} onPress={() => setTcTipo(t.id)}>
+                  <Text style={[s.miniChipTxt, tcTipo === t.id && s.miniChipTxtOn]}>{t.label}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+            {tcBanco === UENO_ID && (
+              <>
+                <Text style={s.inlineLabel}>Tu nivel ueno+</Text>
+                <View style={s.wrapRow}>
+                  {[1, 2, 3, 4, 5].map(n => (
+                    <TouchableOpacity key={n} style={[s.miniChip, tcUeno === n && s.miniChipOn]} onPress={() => setTcUeno(n)}>
+                      <Text style={[s.miniChipTxt, tcUeno === n && s.miniChipTxtOn]}>Nivel {n}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </>
+            )}
+            {tcBanco == null && <Text style={s.inlineHint}>Elegí el banco de tu tarjeta para calcular el ahorro.</Text>}
+          </View>
         )}
 
         {/* RESULTADOS */}
@@ -246,6 +297,15 @@ const s = StyleSheet.create({
   tjChipOn: { backgroundColor: theme.colors.navy, borderColor: theme.colors.navy },
   tjChipTxt: { color: theme.colors.navy, fontSize: 12, fontWeight: '700', flexShrink: 1 },
   tjChipTxtOn: { color: '#fff' },
+
+  inlineCard: { marginHorizontal: 16, marginTop: 10, backgroundColor: theme.colors.bgCard, borderRadius: theme.radius.lg, borderWidth: 1, borderColor: theme.colors.border, padding: 14 },
+  inlineLabel: { color: theme.colors.text, fontSize: 13, fontWeight: '700', marginBottom: 8, marginTop: 8 },
+  inlineHint: { color: theme.colors.textMuted, fontSize: 12, marginTop: 10 },
+  wrapRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 7 },
+  miniChip: { backgroundColor: theme.colors.bgCardAlt, borderRadius: theme.radius.full, paddingHorizontal: 12, paddingVertical: 7, borderWidth: 1, borderColor: theme.colors.border },
+  miniChipOn: { backgroundColor: theme.colors.navy, borderColor: theme.colors.navy },
+  miniChipTxt: { color: theme.colors.textSecondary, fontSize: 12, fontWeight: '600' },
+  miniChipTxtOn: { color: '#fff', fontWeight: '700' },
 
   noAplicaCard: { marginHorizontal: 16, marginTop: 16, backgroundColor: '#FFF8EC', borderRadius: theme.radius.lg, borderWidth: 1, borderColor: '#F5E3C2', flexDirection: 'row', alignItems: 'center', gap: 10, padding: 14 },
   noAplicaTxt: { flex: 1, color: '#8A6D3B', fontSize: 13, fontWeight: '600', lineHeight: 19 },

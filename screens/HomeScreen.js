@@ -41,7 +41,17 @@ function saludo() {
   return 'Buenas noches';
 }
 
-const COLS = 'id,comercio,porcentaje,banco_id,categoria_id,dias,todos_los_dias,tipo_tarjeta,tipo_tarjeta_simple,niveles,tipo_beneficio,vence, bancos(nombre,color,logo_url), categorias(nombre,emoji)';
+const COLS = 'id,comercio,porcentaje,banco_id,categoria_id,dias,todos_los_dias,tipo_tarjeta,tipo_tarjeta_simple,niveles,tipo_beneficio,vence,campania, bancos(nombre,color,logo_url), categorias(nombre,emoji)';
+
+const CAMPANIAS = {
+  dia_padre: { label: 'Día del Padre', emoji: '🎁' },
+  dia_madre: { label: 'Día de la Madre', emoji: '💐' },
+  navidad: { label: 'Navidad', emoji: '🎄' },
+  black_friday: { label: 'Black Friday', emoji: '🛍️' },
+  dia_nino: { label: 'Día del Niño', emoji: '🧸' },
+  san_valentin: { label: 'San Valentín', emoji: '💝' },
+  dia_amistad: { label: 'Día de la Amistad', emoji: '🤝' },
+};
 
 export default function HomeScreen({ navigation }) {
   const [beneficios, setBeneficios] = useState([]);
@@ -51,8 +61,9 @@ export default function HomeScreen({ navigation }) {
   const [refreshing, setRefreshing] = useState(false);
   const [busqueda, setBusqueda] = useState('');
   const [diasSel, setDiasSel] = useState([]);
-  const [filtroCategoria, setFiltroCategoria] = useState('todas');
+  const [catsSel, setCatsSel] = useState([]);
   const [bancosSel, setBancosSel] = useState([]);
+  const [campaniaSel, setCampaniaSel] = useState(null);
   const [orden, setOrden] = useState('pct'); // 'pct' | 'vence'
 
   const [misBancos, setMisBancos] = useState([]);
@@ -65,7 +76,8 @@ export default function HomeScreen({ navigation }) {
     let all = [], from = 0; const size = 1000;
     while (true) {
       const { data } = await supabase.from('beneficios').select(COLS)
-        .eq('activo', true).order('porcentaje', { ascending: false }).range(from, from + size - 1);
+        .eq('activo', true).or(`vence.is.null,vence.gte.${HOY_STR}`)
+        .order('porcentaje', { ascending: false }).range(from, from + size - 1);
       all = all.concat(data || []);
       if (!data || data.length < size) break;
       from += size;
@@ -88,7 +100,10 @@ export default function HomeScreen({ navigation }) {
 
   const toggleDia = (id) => setDiasSel(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
   const toggleBanco = (id) => setBancosSel(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
-  const limpiarFiltros = () => { setBusqueda(''); setDiasSel([]); setFiltroCategoria('todas'); setBancosSel([]); setSoloPuedoUsar(false); };
+  const toggleCat = (nombre) => setCatsSel(prev => prev.includes(nombre) ? prev.filter(x => x !== nombre) : [...prev, nombre]);
+  const limpiarFiltros = () => { setBusqueda(''); setDiasSel([]); setCatsSel([]); setBancosSel([]); setCampaniaSel(null); setSoloPuedoUsar(false); };
+
+  const campaniasActivas = useMemo(() => [...new Set(beneficios.filter(b => b.campania).map(b => b.campania))], [beneficios]);
 
   const filtrados = useMemo(() => beneficios.filter(b => {
     const q = busqueda.trim().toLowerCase();
@@ -102,12 +117,13 @@ export default function HomeScreen({ navigation }) {
         return (b.dias || []).includes(d);
       });
     })();
-    const catMatch = filtroCategoria === 'todas' || b.categorias?.nombre === filtroCategoria;
+    const catMatch = catsSel.length === 0 || catsSel.includes(b.categorias?.nombre);
     const bancoMatch = bancosSel.length === 0 || bancosSel.includes(b.banco_id);
+    const campMatch = !campaniaSel || b.campania === campaniaSel;
     const misBancosMatch = !soloMisBancos || misBancos.length === 0 || misBancos.includes(b.banco_id);
     const puedoUsarMatch = !soloPuedoUsar || !!tarjetaQueAplica(b, misTarjetas);
-    return matchQ && diasMatch && catMatch && bancoMatch && misBancosMatch && puedoUsarMatch;
-  }), [beneficios, busqueda, diasSel, filtroCategoria, bancosSel, soloMisBancos, soloPuedoUsar, misBancos, misTarjetas]);
+    return matchQ && diasMatch && catMatch && bancoMatch && campMatch && misBancosMatch && puedoUsarMatch;
+  }), [beneficios, busqueda, diasSel, catsSel, bancosSel, campaniaSel, soloMisBancos, soloPuedoUsar, misBancos, misTarjetas]);
 
   // Agrupar por comercio
   const comerciosList = useMemo(() => {
@@ -138,7 +154,7 @@ export default function HomeScreen({ navigation }) {
   }, [filtrados, misTarjetas, orden]);
 
   const destacados = useMemo(() => beneficios.filter(b => b.porcentaje >= 30).slice(0, 8), [beneficios]);
-  const hayFiltro = busqueda.trim() || diasSel.length > 0 || filtroCategoria !== 'todas' || bancosSel.length > 0 || soloPuedoUsar;
+  const hayFiltro = busqueda.trim() || diasSel.length > 0 || catsSel.length > 0 || bancosSel.length > 0 || campaniaSel || soloPuedoUsar;
 
   if (loading) return (<View style={s.centered}><ActivityIndicator size="large" color={theme.colors.primary} /><Text style={s.loadTxt}>Cargando beneficios…</Text></View>);
 
@@ -228,6 +244,21 @@ export default function HomeScreen({ navigation }) {
         <Ionicons name="chevron-forward" size={18} color={theme.colors.textMuted} />
       </TouchableOpacity>
 
+      {campaniasActivas.map(c => {
+        const info = CAMPANIAS[c] || { label: c, emoji: '✨' };
+        const activo = campaniaSel === c;
+        return (
+          <TouchableOpacity key={c} style={[s.campBtn, activo && s.campBtnOn]} activeOpacity={0.85} onPress={() => setCampaniaSel(activo ? null : c)}>
+            <Text style={s.campEmoji}>{info.emoji}</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={[s.campTitle, activo && s.campTitleOn]}>{info.label}</Text>
+              <Text style={[s.campSub, activo && s.campSubOn]}>{activo ? 'Mostrando solo esta campaña · tocá para quitar' : 'Descuentos especiales por la fecha'}</Text>
+            </View>
+            <Ionicons name={activo ? 'checkmark-circle' : 'chevron-forward'} size={18} color={activo ? '#fff' : theme.colors.primary} />
+          </TouchableOpacity>
+        );
+      })}
+
       <View style={s.filtroHead}>
         <Ionicons name="calendar-outline" size={15} color={theme.colors.textSecondary} />
         <Text style={s.filtroHeadTxt}>Elegí los días</Text>
@@ -284,16 +315,24 @@ export default function HomeScreen({ navigation }) {
         </View>
       )}
 
-      <View style={s.filtroHead}><Ionicons name="grid-outline" size={15} color={theme.colors.textSecondary} /><Text style={s.filtroHeadTxt}>Categorías</Text></View>
+      <View style={s.filtroHead}>
+        <Ionicons name="grid-outline" size={15} color={theme.colors.textSecondary} />
+        <Text style={s.filtroHeadTxt}>Categorías</Text>
+        {catsSel.length > 0 && <View style={s.selBadge}><Text style={s.selBadgeTxt}>{catsSel.length}</Text></View>}
+      </View>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.filtrosScroll} contentContainerStyle={s.filtrosContent}>
-        <TouchableOpacity style={[s.chip, filtroCategoria === 'todas' && s.chipActive]} onPress={() => setFiltroCategoria('todas')}>
-          <Text style={[s.chipText, filtroCategoria === 'todas' && s.chipTextActive]}>Todas</Text>
+        <TouchableOpacity style={[s.chip, catsSel.length === 0 && s.chipActive]} onPress={() => setCatsSel([])}>
+          <Text style={[s.chipText, catsSel.length === 0 && s.chipTextActive]}>Todas</Text>
         </TouchableOpacity>
-        {categorias.map(c => (
-          <TouchableOpacity key={c.id} style={[s.chip, filtroCategoria === c.nombre && s.chipActive]} onPress={() => setFiltroCategoria(c.nombre)}>
-            <Text style={[s.chipText, filtroCategoria === c.nombre && s.chipTextActive]}>{c.emoji} {c.nombre}</Text>
-          </TouchableOpacity>
-        ))}
+        {categorias.map(c => {
+          const activo = catsSel.includes(c.nombre);
+          return (
+            <TouchableOpacity key={c.id} style={[s.chip, activo && s.chipActive]} onPress={() => toggleCat(c.nombre)}>
+              {activo && <Ionicons name="checkmark" size={13} color="#fff" />}
+              <Text style={[s.chipText, activo && s.chipTextActive]}>{c.emoji} {c.nombre}</Text>
+            </TouchableOpacity>
+          );
+        })}
       </ScrollView>
 
       <View style={s.section}>
@@ -360,6 +399,14 @@ const s = StyleSheet.create({
   calcIcon: { width: 40, height: 40, borderRadius: 12, backgroundColor: theme.colors.primaryLight, alignItems: 'center', justifyContent: 'center' },
   calcTitle: { color: theme.colors.text, fontSize: 15, fontWeight: '800' },
   calcSub: { color: theme.colors.textSecondary, fontSize: 12, marginTop: 1 },
+
+  campBtn: { marginHorizontal: 16, marginTop: 10, backgroundColor: theme.colors.primaryLight, borderRadius: theme.radius.lg, borderWidth: 1, borderColor: theme.colors.primary + '55', flexDirection: 'row', alignItems: 'center', gap: 12, padding: 14 },
+  campBtnOn: { backgroundColor: theme.colors.primary, borderColor: theme.colors.primary },
+  campEmoji: { fontSize: 24 },
+  campTitle: { color: theme.colors.primaryDark, fontSize: 15, fontWeight: '800' },
+  campTitleOn: { color: '#fff' },
+  campSub: { color: theme.colors.primaryDark, fontSize: 12, marginTop: 1, opacity: 0.8 },
+  campSubOn: { color: 'rgba(255,255,255,0.9)', opacity: 1 },
 
   filtroHead: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 18, marginTop: 14, marginBottom: 2 },
   filtroHeadTxt: { color: theme.colors.textSecondary, fontSize: 13, fontWeight: '700' },

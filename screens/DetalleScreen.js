@@ -8,6 +8,7 @@ import { supabase } from '../lib/supabase';
 import { theme } from '../lib/theme';
 import { BancoLogo, TipoBadge } from '../components/ui';
 import { getFavoritos, toggleFavorito, getMisTarjetas, tarjetaQueAplica, porcentajePersonalizado, marcaLabel, nivelLabel } from '../lib/storage';
+import { abrirURL, abrirMail } from '../lib/links';
 
 const DIAS_LABEL = { lunes: 'Lunes', martes: 'Martes', miercoles: 'Miércoles', jueves: 'Jueves', viernes: 'Viernes', sabado: 'Sábado', domingo: 'Domingo' };
 const REPORTE_EMAIL = 'ahorrapp.py@gmail.com';
@@ -54,7 +55,7 @@ export default function DetalleScreen({ route, navigation }) {
     } catch (e) {}
     const asunto = encodeURIComponent(`Reporte beneficio: ${b.comercio} (${b.bancos?.nombre || ''})`);
     const cuerpo = encodeURIComponent(`Beneficio: ${b.comercio}\nBanco: ${b.bancos?.nombre || ''}\nMotivo: ${motivo || '-'}\n\n${mensaje.trim()}\n\n(ID: ${b.id})`);
-    Linking.openURL(`mailto:${REPORTE_EMAIL}?subject=${asunto}&body=${cuerpo}`).catch(() => {});
+    abrirMail(`mailto:${REPORTE_EMAIL}?subject=${asunto}&body=${cuerpo}`);
     setEnviando(false); setModal(false); setMensaje(''); setMotivo(''); setEmail('');
     Alert.alert('¡Gracias!', 'Recibimos tu reporte. Lo vamos a revisar para corregir el beneficio.');
   };
@@ -73,7 +74,7 @@ export default function DetalleScreen({ route, navigation }) {
         <TouchableOpacity style={s.iconBtn} onPress={() => navigation.goBack()}><Ionicons name="arrow-back" size={22} color={theme.colors.navy} /></TouchableOpacity>
         <View style={{ flexDirection: 'row', gap: 8 }}>
           <TouchableOpacity style={s.iconBtn} onPress={onFav}><Ionicons name={fav ? 'heart' : 'heart-outline'} size={20} color={fav ? theme.colors.danger : theme.colors.navy} /></TouchableOpacity>
-          {link ? <TouchableOpacity style={s.iconBtn} onPress={() => Linking.openURL(link)}><Ionicons name="open-outline" size={20} color={theme.colors.navy} /></TouchableOpacity> : null}
+          {link ? <TouchableOpacity style={s.iconBtn} onPress={() => abrirURL(link)}><Ionicons name="open-outline" size={20} color={theme.colors.navy} /></TouchableOpacity> : null}
         </View>
       </View>
 
@@ -181,7 +182,7 @@ export default function DetalleScreen({ route, navigation }) {
       {/* CTA FIJO */}
       {link ? (
         <View style={s.footer}>
-          <TouchableOpacity style={s.btnPrincipal} activeOpacity={0.9} onPress={() => Linking.openURL(link)}>
+          <TouchableOpacity style={s.btnPrincipal} activeOpacity={0.9} onPress={() => abrirURL(link)}>
             <Ionicons name="document-text-outline" size={18} color="#fff" />
             <Text style={s.btnPrincipalTxt}>Ver bases y condiciones</Text>
           </TouchableOpacity>

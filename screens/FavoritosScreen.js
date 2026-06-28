@@ -22,7 +22,8 @@ export default function FavoritosScreen({ navigation }) {
       .from('beneficios')
       .select('*, bancos(nombre,color,url_web,url_beneficios,logo_url), categorias(nombre,emoji)')
       .in('id', favs)
-      .eq('activo', true);
+      .eq('activo', true)
+      .or(`vence.is.null,vence.gte.${new Date().toISOString().slice(0, 10)}`);
     setItems(data || []);
     setLoading(false);
   }, []);
