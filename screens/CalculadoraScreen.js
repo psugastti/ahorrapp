@@ -109,8 +109,11 @@ export default function CalculadoraScreen({ navigation }) {
 
   return (
     <View style={s.container}>
+      {/* Ahora es una pestaña, así que no siempre hay a dónde volver. */}
       <View style={s.topbar}>
-        <TouchableOpacity style={s.iconBtn} onPress={() => navigation.goBack()}><Ionicons name="arrow-back" size={22} color={theme.colors.navy} /></TouchableOpacity>
+        {navigation.canGoBack() ? (
+          <TouchableOpacity style={s.iconBtn} onPress={() => navigation.goBack()}><Ionicons name="arrow-back" size={22} color={theme.colors.navy} /></TouchableOpacity>
+        ) : <View style={{ width: 40 }} />}
         <Text style={s.topTitle}>Calculadora de ahorro</Text>
         <View style={{ width: 40 }} />
       </View>

@@ -1,47 +1,33 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
-  View, Text, ScrollView, TouchableOpacity, StyleSheet,
-  RefreshControl, ActivityIndicator, TextInput, Image,
+  View, Text, TouchableOpacity, StyleSheet,
+  RefreshControl, ActivityIndicator, ScrollView,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
+import { setStatusBarStyle } from 'expo-status-bar';
 import { supabase } from '../lib/supabase';
 import { theme } from '../lib/theme';
-import { BancoLogo } from '../components/ui';
+import HeroHeader, { BarraCondensada } from '../components/HeroHeader';
+import ComercioCard from '../components/ComercioCard';
+import FiltrosSheet from '../components/FiltrosSheet';
 import { getMisBancos, getMisTarjetas, getPrefs, tarjetaQueAplica } from '../lib/storage';
 import { chequearAvisoDiario } from '../lib/notifications';
 
 const DIAS = ['domingo', 'lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado'];
+const DIAS_CORTO = { lunes: 'Lun', martes: 'Mar', miercoles: 'Mié', jueves: 'Jue', viernes: 'Vie', sabado: 'Sáb', domingo: 'Dom' };
 const HOY = DIAS[new Date().getDay()];
 const HOY_STR = new Date().toISOString().slice(0, 10);
 
-// Días que faltan para que venza un beneficio (null si no tiene fecha o ya venció)
-function diasParaVencer(vence) {
-  if (!vence) return null;
-  const d = Math.ceil((new Date(vence + 'T00:00:00') - new Date(HOY_STR + 'T00:00:00')) / 86400000);
-  return d < 0 ? null : d;
-}
-function etiquetaVence(d) {
-  if (d === null) return null;
-  if (d === 0) return 'Vence hoy';
-  if (d === 1) return 'Último día mañana';
-  return `Vence en ${d} días`;
-}
+// Cuántos comercios se pintan de entrada y de a cuánto crece al llegar al final.
+// Antes había un tope duro de 120 y el resto del catálogo era inalcanzable.
+const PAGINA = 40;
 
-const FILTROS_DIA = [
-  { id: 'todos', label: 'Todos' }, { id: 'hoy', label: 'Hoy' }, { id: 'finde', label: 'Finde' },
-  { id: 'lunes', label: 'Lun' }, { id: 'martes', label: 'Mar' }, { id: 'miercoles', label: 'Mié' },
-  { id: 'jueves', label: 'Jue' }, { id: 'viernes', label: 'Vie' }, { id: 'sabado', label: 'Sáb' }, { id: 'domingo', label: 'Dom' },
-];
-
-function saludo() {
-  const h = new Date().getHours();
-  if (h < 12) return 'Buenos días';
-  if (h < 19) return 'Buenas tardes';
-  return 'Buenas noches';
-}
-
-const COLS = 'id,comercio,porcentaje,banco_id,categoria_id,dias,todos_los_dias,tipo_tarjeta,tipo_tarjeta_simple,niveles,tipo_beneficio,vence,campania, bancos(nombre,color,logo_url), categorias(nombre,emoji)';
+// Columnas mínimas. Los datos de banco y categoría NO se piden anidados: se traen
+// las dos tablas enteras una sola vez (14 y 28 filas) y se cruzan en memoria.
+// Con 2.600+ beneficios, repetir el objeto del banco en cada fila multiplicaba el payload.
+const COLS = 'id,comercio,porcentaje,banco_id,categoria_id,dias,todos_los_dias,'
+  + 'tipo_tarjeta,tipo_tarjeta_simple,marca_tarjeta,nivel_min,niveles,tipo_beneficio,vence,campania';
 
 const CAMPANIAS = {
   dia_padre: { label: 'Día del Padre', emoji: '🎁' },
@@ -53,18 +39,35 @@ const CAMPANIAS = {
   dia_amistad: { label: 'Día de la Amistad', emoji: '🤝' },
 };
 
+const SEGMENTOS = [
+  { id: 'vos', label: 'Para vos' },
+  { id: 'todos', label: 'Todos' },
+  { id: 'vence', label: 'Vence pronto' },
+];
+
+function diasParaVencer(vence) {
+  if (!vence) return null;
+  const d = Math.ceil((new Date(vence + 'T00:00:00') - new Date(HOY_STR + 'T00:00:00')) / 86400000);
+  return d < 0 ? null : d;
+}
+
+// A partir de qué scroll aparece la barra condensada.
+const UMBRAL_BARRA = 150;
+
 export default function HomeScreen({ navigation }) {
   const [beneficios, setBeneficios] = useState([]);
-  const [categorias, setCategorias] = useState([]);
-  const [bancos, setBancos] = useState([]);
+  const [bancosMap, setBancosMap] = useState(new Map());
+  const [catsMap, setCatsMap] = useState(new Map());
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+
   const [busqueda, setBusqueda] = useState('');
   const [diasSel, setDiasSel] = useState([]);
   const [catsSel, setCatsSel] = useState([]);
   const [bancosSel, setBancosSel] = useState([]);
+  const [tipoSel, setTipoSel] = useState(null);
   const [campaniaSel, setCampaniaSel] = useState(null);
-  const [orden, setOrden] = useState('pct'); // 'pct' | 'vence'
+  const [segmento, setSegmento] = useState('todos');
 
   const [misBancos, setMisBancos] = useState([]);
   const [misTarjetas, setMisTarjetas] = useState([]);
@@ -72,295 +75,388 @@ export default function HomeScreen({ navigation }) {
   const [soloPuedoUsar, setSoloPuedoUsar] = useState(false);
   const [aviso, setAviso] = useState(null);
 
+  const [sheetAbierta, setSheetAbierta] = useState(false);
+  const [limite, setLimite] = useState(PAGINA);
+
+  // Barra condensada. Se maneja con un onScroll común y un booleano: sin
+  // Animated.event, para no interferir con la virtualización de la lista.
+  const [condensada, setCondensada] = useState(false);
+  const alScrollear = useCallback((e) => {
+    const y = e.nativeEvent.contentOffset.y;
+    const debe = y > UMBRAL_BARRA;
+    setCondensada(prev => (prev === debe ? prev : debe));
+  }, []);
+
   const cargar = useCallback(async () => {
+    const [{ data: bcos }, { data: cats }] = await Promise.all([
+      supabase.from('bancos').select('id,nombre,color,logo_url').eq('activo', true).order('nombre'),
+      supabase.from('categorias').select('id,nombre,emoji').eq('is_active', true).order('nombre'),
+    ]);
+    setBancosMap(new Map((bcos || []).map(b => [b.id, b])));
+    setCatsMap(new Map((cats || []).map(c => [c.id, c])));
+
+    // La paginación por rango necesita un orden estable. Ordenando solo por
+    // porcentaje hay cientos de empates, Postgres puede devolverlos en distinto
+    // orden en cada página, y así se repetían filas y se perdían comercios
+    // (traía 2.653 filas pero con duplicados: faltaban 47 comercios).
     let all = [], from = 0; const size = 1000;
     while (true) {
       const { data } = await supabase.from('beneficios').select(COLS)
         .eq('activo', true).or(`vence.is.null,vence.gte.${HOY_STR}`)
-        .order('porcentaje', { ascending: false }).range(from, from + size - 1);
+        .order('porcentaje', { ascending: false })
+        .order('id', { ascending: true })
+        .range(from, from + size - 1);
       all = all.concat(data || []);
       if (!data || data.length < size) break;
       from += size;
     }
-    const { data: c } = await supabase.from('categorias').select('*').eq('is_active', true).order('nombre');
-    const { data: bcos } = await supabase.from('bancos').select('*').eq('activo', true).order('nombre');
-    setBeneficios(all); setCategorias(c || []); setBancos(bcos || []);
-    setLoading(false); setRefreshing(false);
+    setBeneficios(all);
+    setLoading(false);
+    setRefreshing(false);
   }, []);
 
-  useEffect(() => { cargar(); }, []);
+  useEffect(() => { cargar(); }, [cargar]);
+
   useFocusEffect(useCallback(() => {
+    // La cabecera de Inicio es navy: los íconos de la barra de estado tienen que ir claros.
+    // Las demás pestañas son de fondo claro, así que al salir se vuelve a oscuro.
+    setStatusBarStyle('light');
     (async () => {
       setMisBancos(await getMisBancos());
       setMisTarjetas(await getMisTarjetas());
-      const p = await getPrefs(); setSoloMisBancos(!!p.soloMisBancos);
+      const p = await getPrefs();
+      setSoloMisBancos(!!p.soloMisBancos);
       try { const r = await chequearAvisoDiario(); if (r.mostrar) setAviso(r); } catch {}
     })();
+    return () => setStatusBarStyle('dark');
   }, []));
 
-  const toggleDia = (id) => setDiasSel(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
-  const toggleBanco = (id) => setBancosSel(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
-  const toggleCat = (nombre) => setCatsSel(prev => prev.includes(nombre) ? prev.filter(x => x !== nombre) : [...prev, nombre]);
-  const limpiarFiltros = () => { setBusqueda(''); setDiasSel([]); setCatsSel([]); setBancosSel([]); setCampaniaSel(null); setSoloPuedoUsar(false); };
+  const toggleEn = (setter) => (valor) =>
+    setter(prev => (prev.includes(valor) ? prev.filter(x => x !== valor) : [...prev, valor]));
+  const toggleDia = toggleEn(setDiasSel);
+  const toggleBanco = toggleEn(setBancosSel);
+  const toggleCat = toggleEn(setCatsSel);
 
-  const campaniasActivas = useMemo(() => [...new Set(beneficios.filter(b => b.campania).map(b => b.campania))], [beneficios]);
+  const limpiarFiltros = () => {
+    setBusqueda(''); setDiasSel([]); setCatsSel([]); setBancosSel([]);
+    setTipoSel(null); setCampaniaSel(null); setSoloPuedoUsar(false);
+  };
 
-  const filtrados = useMemo(() => beneficios.filter(b => {
+  // Solo los bancos y categorías que realmente tienen beneficios visibles.
+  // BNF y FIC están activos en la base pero con cero beneficios: antes aparecían
+  // en el filtro y al tocarlos dejaban la pantalla vacía.
+  const bancosConDatos = useMemo(() => {
+    const ids = new Set(beneficios.map(b => b.banco_id));
+    return [...bancosMap.values()].filter(b => ids.has(b.id));
+  }, [beneficios, bancosMap]);
+
+  const catsConDatos = useMemo(() => {
+    const ids = new Set(beneficios.map(b => b.categoria_id));
+    return [...catsMap.values()].filter(c => ids.has(c.id));
+  }, [beneficios, catsMap]);
+
+  const campaniasActivas = useMemo(
+    () => [...new Set(beneficios.filter(b => b.campania).map(b => b.campania))],
+    [beneficios]
+  );
+
+  const vencenEstaSemana = useMemo(
+    () => beneficios.filter(b => { const d = diasParaVencer(b.vence); return d !== null && d <= 7; }).length,
+    [beneficios]
+  );
+
+  const filtrados = useMemo(() => {
     const q = busqueda.trim().toLowerCase();
-    const matchQ = !q || b.comercio?.toLowerCase().includes(q) || b.bancos?.nombre?.toLowerCase().includes(q) || b.categorias?.nombre?.toLowerCase().includes(q);
-    const diasMatch = (() => {
-      if (diasSel.length === 0) return true;
-      if (b.todos_los_dias) return true;
-      return diasSel.some(d => {
-        if (d === 'hoy') return (b.dias || []).includes(HOY);
-        if (d === 'finde') return (b.dias || []).some(x => ['sabado', 'domingo'].includes(x));
-        return (b.dias || []).includes(d);
-      });
-    })();
-    const catMatch = catsSel.length === 0 || catsSel.includes(b.categorias?.nombre);
-    const bancoMatch = bancosSel.length === 0 || bancosSel.includes(b.banco_id);
-    const campMatch = !campaniaSel || b.campania === campaniaSel;
-    const misBancosMatch = !soloMisBancos || misBancos.length === 0 || misBancos.includes(b.banco_id);
-    const puedoUsarMatch = !soloPuedoUsar || !!tarjetaQueAplica(b, misTarjetas);
-    return matchQ && diasMatch && catMatch && bancoMatch && campMatch && misBancosMatch && puedoUsarMatch;
-  }), [beneficios, busqueda, diasSel, catsSel, bancosSel, campaniaSel, soloMisBancos, soloPuedoUsar, misBancos, misTarjetas]);
+    return beneficios.filter(b => {
+      if (q) {
+        const banco = bancosMap.get(b.banco_id)?.nombre?.toLowerCase() || '';
+        const cat = catsMap.get(b.categoria_id)?.nombre?.toLowerCase() || '';
+        if (!b.comercio?.toLowerCase().includes(q) && !banco.includes(q) && !cat.includes(q)) return false;
+      }
+      if (diasSel.length > 0 && !b.todos_los_dias) {
+        const coincide = diasSel.some(d => {
+          if (d === 'hoy') return (b.dias || []).includes(HOY);
+          if (d === 'finde') return (b.dias || []).some(x => x === 'sabado' || x === 'domingo');
+          return (b.dias || []).includes(d);
+        });
+        if (!coincide) return false;
+      }
+      if (catsSel.length > 0 && !catsSel.includes(catsMap.get(b.categoria_id)?.nombre)) return false;
+      if (bancosSel.length > 0 && !bancosSel.includes(b.banco_id)) return false;
+      if (campaniaSel && b.campania !== campaniaSel) return false;
+      if (tipoSel) {
+        const tipo = b.tipo_tarjeta_simple || b.tipo_tarjeta || 'ambas';
+        if (tipoSel === 'credito' && !['credito', 'ambas', 'premium'].includes(tipo)) return false;
+        if (tipoSel === 'debito' && !['debito', 'ambas'].includes(tipo)) return false;
+        if (tipoSel === 'premium' && tipo !== 'premium') return false;
+      }
+      if (soloMisBancos && misBancos.length > 0 && !misBancos.includes(b.banco_id)) return false;
+      if (soloPuedoUsar && !tarjetaQueAplica(b, misTarjetas)) return false;
+      return true;
+    });
+  }, [beneficios, bancosMap, catsMap, busqueda, diasSel, catsSel, bancosSel,
+      campaniaSel, tipoSel, soloMisBancos, soloPuedoUsar, misBancos, misTarjetas]);
 
-  // Agrupar por comercio
-  const comerciosList = useMemo(() => {
+  // Un beneficio por fila se agrupa en un comercio: la lista muestra comercios, no beneficios.
+  const comercios = useMemo(() => {
     const map = new Map();
     for (const b of filtrados) {
-      const key = b.comercio;
-      if (!map.has(key)) map.set(key, { comercio: key, items: [], bancos: new Set(), maxPct: 0, cat: b.categorias, aplica: false, diasVence: null });
-      const g = map.get(key);
-      g.items.push(b);
-      if (b.banco_id) g.bancos.add(b.banco_id);
-      if ((b.porcentaje || 0) > g.maxPct) g.maxPct = b.porcentaje || 0;
+      let g = map.get(b.comercio);
+      if (!g) {
+        g = {
+          comercio: b.comercio, bancosIds: new Set(), maxPct: 0,
+          categoria: catsMap.get(b.categoria_id)?.nombre || null,
+          colorBanco: null, bancoNombre: '', aplica: false, diasVence: null,
+          diasTexto: null, otrosBancos: 0,
+        };
+        map.set(b.comercio, g);
+      }
+      if (b.banco_id) g.bancosIds.add(b.banco_id);
+      if ((b.porcentaje || 0) > g.maxPct) {
+        g.maxPct = b.porcentaje || 0;
+        const bk = bancosMap.get(b.banco_id);
+        g.colorBanco = bk?.color || null;
+        g.bancoNombre = bk?.nombre || '';
+        g.diasTexto = b.todos_los_dias
+          ? 'Todos los días'
+          : (b.dias?.length ? b.dias.map(d => DIAS_CORTO[d] || d).join(' · ') : null);
+      }
       if (!g.aplica && tarjetaQueAplica(b, misTarjetas)) g.aplica = true;
       const dv = diasParaVencer(b.vence);
       if (dv !== null && (g.diasVence === null || dv < g.diasVence)) g.diasVence = dv;
     }
-    const list = [...map.values()];
-    if (orden === 'vence') {
-      // los que vencen pronto primero; los sin fecha al final
-      list.sort((a, b) => {
-        const av = a.diasVence === null ? Infinity : a.diasVence;
-        const bv = b.diasVence === null ? Infinity : b.diasVence;
-        return av - bv || b.maxPct - a.maxPct;
-      });
-    } else {
-      list.sort((a, b) => b.maxPct - a.maxPct);
+
+    let lista = [...map.values()];
+    for (const g of lista) {
+      g.otrosBancos = g.bancosIds.size - 1;
+      if (!g.bancoNombre) g.bancoNombre = bancosMap.get([...g.bancosIds][0])?.nombre || '';
     }
-    return list;
-  }, [filtrados, misTarjetas, orden]);
 
-  const destacados = useMemo(() => beneficios.filter(b => b.porcentaje >= 30).slice(0, 8), [beneficios]);
-  const hayFiltro = busqueda.trim() || diasSel.length > 0 || catsSel.length > 0 || bancosSel.length > 0 || campaniaSel || soloPuedoUsar;
+    if (segmento === 'vos') lista = lista.filter(g => g.aplica);
+    if (segmento === 'vence') lista = lista.filter(g => g.diasVence !== null);
 
-  if (loading) return (<View style={s.centered}><ActivityIndicator size="large" color={theme.colors.primary} /><Text style={s.loadTxt}>Cargando beneficios…</Text></View>);
+    if (segmento === 'vence') {
+      lista.sort((a, b) => a.diasVence - b.diasVence || b.maxPct - a.maxPct);
+    } else {
+      lista.sort((a, b) => b.maxPct - a.maxPct);
+    }
+    return lista;
+  }, [filtrados, bancosMap, catsMap, misTarjetas, segmento]);
 
-  const irAComercio = (comercio) => navigation.navigate('Comercio', { comercio });
+  // Cada vez que cambia lo que se ve, se vuelve al principio de la paginación.
+  useEffect(() => { setLimite(PAGINA); }, [comercios]);
 
-  const renderMerchant = (g) => (
-    <TouchableOpacity key={g.comercio} style={s.card} activeOpacity={0.8} onPress={() => irAComercio(g.comercio)}>
-      <View style={[s.mLogo, { backgroundColor: theme.colors.navy + '12' }]}>
-        <Text style={s.mLogoTxt}>{(g.comercio || '?').slice(0, 1).toUpperCase()}</Text>
+  const visibles = useMemo(() => comercios.slice(0, limite), [comercios, limite]);
+  const hayMas = limite < comercios.length;
+  const verMas = useCallback(() => setLimite(l => l + PAGINA), []);
+
+  const filtrosActivos =
+    diasSel.length + catsSel.length + bancosSel.length
+    + (tipoSel ? 1 : 0) + (campaniaSel ? 1 : 0)
+    + (soloMisBancos ? 1 : 0) + (soloPuedoUsar ? 1 : 0);
+  const hayFiltro = filtrosActivos > 0 || busqueda.trim().length > 0;
+
+  const irAComercio = useCallback((comercio) => navigation.navigate('Comercio', { comercio }), [navigation]);
+
+  if (loading) {
+    return (
+      <View style={s.centered}>
+        <ActivityIndicator size="large" color={theme.colors.primary} />
+        <Text style={s.loadTxt}>Cargando beneficios…</Text>
       </View>
-      <View style={{ flex: 1 }}>
-        <Text style={s.cardComercio} numberOfLines={1}>{g.comercio}</Text>
-        <Text style={s.cardSub} numberOfLines={1}>{g.cat?.emoji} {g.cat?.nombre} · {g.bancos.size} banco{g.bancos.size > 1 ? 's' : ''}</Text>
-        <View style={s.cardTagsRow}>
-          {g.aplica ? <View style={s.tagAplica}><Ionicons name="checkmark-circle" size={11} color={theme.colors.success} /><Text style={s.tagAplicaTxt}>Tenés tarjeta</Text></View> : null}
-          {g.diasVence !== null && g.diasVence <= 10 ? <View style={s.tagVence}><Ionicons name="time-outline" size={11} color={theme.colors.danger} /><Text style={s.tagVenceTxt}>{etiquetaVence(g.diasVence)}</Text></View> : null}
-        </View>
-      </View>
-      <View style={s.cardRight}>
-        {g.maxPct ? <View style={s.pct}><Text style={s.pctTxt}>Hasta {g.maxPct}%</Text></View> : null}
-        <Ionicons name="chevron-forward" size={18} color={theme.colors.textMuted} />
-      </View>
-    </TouchableOpacity>
-  );
+    );
+  }
 
-  return (
-    <ScrollView style={s.container} keyboardShouldPersistTaps="handled"
-      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); cargar(); }} tintColor={theme.colors.primary} />}
-      showsVerticalScrollIndicator={false}>
-      <View style={s.header}>
-        <View style={{ flex: 1 }}>
-          <Text style={s.headerGreeting}>{saludo()} 👋</Text>
-          <Image source={require('../assets/logo.png')} style={s.logo} resizeMode="contain" />
-        </View>
-      </View>
+  const cabecera = (
+    <View>
+      <HeroHeader
+        totalBeneficios={beneficios.length}
+        vencenPronto={vencenEstaSemana}
+        busqueda={busqueda}
+        setBusqueda={setBusqueda}
+        diasSel={diasSel}
+        toggleDia={toggleDia}
+        limpiarDias={() => setDiasSel([])}
+        onPerfil={() => navigation.navigate('Perfil')}
+      />
 
-      <View style={s.searchBox}>
-        <Ionicons name="search-outline" size={18} color={theme.colors.textMuted} />
-        <TextInput style={s.searchInput} placeholder="Buscar comercio, banco o categoría" placeholderTextColor={theme.colors.textMuted} value={busqueda} onChangeText={setBusqueda} returnKeyType="search" />
-        {busqueda ? <TouchableOpacity onPress={() => setBusqueda('')}><Ionicons name="close-circle" size={18} color={theme.colors.textMuted} /></TouchableOpacity> : null}
-      </View>
-
+      <View style={s.bloque}>
       {aviso && (
-        <TouchableOpacity style={s.avisoBanner} activeOpacity={0.85} onPress={() => { setDiasSel(['hoy']); setAviso(null); }}>
-          <View style={s.avisoIcon}><Ionicons name="notifications" size={18} color="#fff" /></View>
+        <TouchableOpacity
+          style={s.aviso}
+          activeOpacity={0.85}
+          onPress={() => { setDiasSel(['hoy']); setAviso(null); }}
+        >
+          <View style={s.avisoIcon}><Ionicons name="notifications" size={17} color="#fff" /></View>
           <View style={{ flex: 1 }}>
             <Text style={s.avisoTitulo}>Descuentos de hoy</Text>
             <Text style={s.avisoCuerpo} numberOfLines={1}>{aviso.cuerpo}</Text>
           </View>
-          <TouchableOpacity hitSlop={10} onPress={() => setAviso(null)}><Ionicons name="close" size={18} color={theme.colors.textMuted} /></TouchableOpacity>
+          <TouchableOpacity hitSlop={10} onPress={() => setAviso(null)}>
+            <Ionicons name="close" size={18} color={theme.colors.textMuted} />
+          </TouchableOpacity>
         </TouchableOpacity>
       )}
 
-      <View style={s.togglesRow}>
-        {misBancos.length > 0 && (
-          <TouchableOpacity style={[s.toggle, soloMisBancos && s.toggleOn]} onPress={() => setSoloMisBancos(v => !v)}>
-            <Ionicons name="business" size={13} color={soloMisBancos ? '#fff' : theme.colors.navy} /><Text style={[s.toggleTxt, soloMisBancos && s.toggleTxtOn]}>Mis bancos</Text>
-          </TouchableOpacity>
-        )}
-        {misTarjetas.length > 0 && (
-          <TouchableOpacity style={[s.toggle, soloPuedoUsar && s.toggleOn]} onPress={() => setSoloPuedoUsar(v => !v)}>
-            <Ionicons name="card" size={13} color={soloPuedoUsar ? '#fff' : theme.colors.navy} /><Text style={[s.toggleTxt, soloPuedoUsar && s.toggleTxtOn]}>Puedo usar</Text>
-          </TouchableOpacity>
-        )}
-        {misBancos.length === 0 && misTarjetas.length === 0 && (
-          <TouchableOpacity style={s.toggleHint} onPress={() => navigation.navigate('Perfil')}>
-            <Ionicons name="sparkles" size={13} color={theme.colors.primaryDark} /><Text style={s.toggleHintTxt}>Configurá tus bancos y tarjetas en Perfil →</Text>
-          </TouchableOpacity>
-        )}
-      </View>
-
-      <View style={s.hero}>
-        <View style={{ flex: 1 }}>
-          <Text style={s.heroKicker}>Más beneficios, más ahorro</Text>
-          <Text style={s.heroBig}>{beneficios.length}</Text>
-          <Text style={s.heroSub}>descuentos y reintegros disponibles</Text>
-        </View>
-        <View style={s.heroIcon}><Ionicons name="pricetags" size={30} color="#fff" /></View>
-      </View>
-
-      <TouchableOpacity style={s.calcBtn} activeOpacity={0.85} onPress={() => navigation.navigate('Calculadora')}>
-        <View style={s.calcIcon}><Ionicons name="calculator" size={20} color={theme.colors.primaryDark} /></View>
-        <View style={{ flex: 1 }}>
-          <Text style={s.calcTitle}>Calculá tu ahorro</Text>
-          <Text style={s.calcSub}>Mirá con qué tarjeta te conviene pagar</Text>
-        </View>
-        <Ionicons name="chevron-forward" size={18} color={theme.colors.textMuted} />
-      </TouchableOpacity>
-
-      {campaniasActivas.map(c => {
-        const info = CAMPANIAS[c] || { label: c, emoji: '✨' };
-        const activo = campaniaSel === c;
-        return (
-          <TouchableOpacity key={c} style={[s.campBtn, activo && s.campBtnOn]} activeOpacity={0.85} onPress={() => setCampaniaSel(activo ? null : c)}>
-            <Text style={s.campEmoji}>{info.emoji}</Text>
-            <View style={{ flex: 1 }}>
-              <Text style={[s.campTitle, activo && s.campTitleOn]}>{info.label}</Text>
-              <Text style={[s.campSub, activo && s.campSubOn]}>{activo ? 'Mostrando solo esta campaña · tocá para quitar' : 'Descuentos especiales por la fecha'}</Text>
-            </View>
-            <Ionicons name={activo ? 'checkmark-circle' : 'chevron-forward'} size={18} color={activo ? '#fff' : theme.colors.primary} />
-          </TouchableOpacity>
-        );
-      })}
-
-      <View style={s.filtroHead}>
-        <Ionicons name="calendar-outline" size={15} color={theme.colors.textSecondary} />
-        <Text style={s.filtroHeadTxt}>Elegí los días</Text>
-        {diasSel.length > 0 && <View style={s.selBadge}><Text style={s.selBadgeTxt}>{diasSel.length}</Text></View>}
-      </View>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.filtrosScroll} contentContainerStyle={s.filtrosContent}>
-        {FILTROS_DIA.map(f => {
-          const activo = f.id === 'todos' ? diasSel.length === 0 : diasSel.includes(f.id);
+      <View style={s.segmento}>
+        {SEGMENTOS.map(seg => {
+          const activo = segmento === seg.id;
           return (
-            <TouchableOpacity key={f.id} style={[s.chip, activo && s.chipActive]} onPress={() => f.id === 'todos' ? setDiasSel([]) : toggleDia(f.id)}>
-              {activo && f.id !== 'todos' && <Ionicons name="checkmark" size={13} color="#fff" />}
-              <Text style={[s.chipText, activo && s.chipTextActive]}>{f.label}</Text>
+            <TouchableOpacity key={seg.id} style={[s.seg, activo && s.segOn]} onPress={() => setSegmento(seg.id)}>
+              <Text style={[s.segTxt, activo && s.segTxtOn]}>{seg.label}</Text>
             </TouchableOpacity>
           );
         })}
-      </ScrollView>
-
-      <View style={s.filtroHead}>
-        <Ionicons name="business-outline" size={15} color={theme.colors.textSecondary} />
-        <Text style={s.filtroHeadTxt}>Bancos</Text>
-        {bancosSel.length > 0 && <View style={s.selBadge}><Text style={s.selBadgeTxt}>{bancosSel.length}</Text></View>}
       </View>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.filtrosScroll} contentContainerStyle={s.filtrosContent}>
-        <TouchableOpacity style={[s.chip, bancosSel.length === 0 && s.chipActive]} onPress={() => setBancosSel([])}>
-          <Text style={[s.chipText, bancosSel.length === 0 && s.chipTextActive]}>Todos</Text>
-        </TouchableOpacity>
-        {bancos.map(bk => {
-          const activo = bancosSel.includes(bk.id);
-          return (
-            <TouchableOpacity key={bk.id} style={[s.chip, activo && s.chipActive, activo && bk.color && { backgroundColor: bk.color, borderColor: bk.color }]} onPress={() => toggleBanco(bk.id)}>
-              {activo ? <Ionicons name="checkmark" size={13} color="#fff" /> : <View style={[s.bancoDot, { backgroundColor: bk.color || theme.colors.navy }]} />}
-              <Text style={[s.chipText, activo && s.chipTextActive]}>{bk.nombre}</Text>
-            </TouchableOpacity>
-          );
-        })}
-      </ScrollView>
+      </View>
 
-      {!hayFiltro && destacados.length > 0 && (
-        <View style={s.section}>
-          <View style={s.sectionHead}><Text style={s.sectionTitle}>Destacados</Text></View>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 12, paddingHorizontal: 16 }}>
-            {destacados.map(b => (
-              <TouchableOpacity key={b.id} style={s.cardDestacado} activeOpacity={0.85} onPress={() => irAComercio(b.comercio)}>
-                <View style={s.cardDestTop}>
-                  <BancoLogo banco={b.bancos} comercio={b.comercio} size={40} />
-                  <View style={s.pctBadge}><Text style={s.pctBadgeTxt}>{b.porcentaje}%</Text></View>
-                </View>
-                <Text style={s.cardDestComercio} numberOfLines={1}>{b.comercio}</Text>
-                <Text style={s.cardDestBanco} numberOfLines={1}>{b.bancos?.nombre}</Text>
-                <Text style={s.cardDestCat} numberOfLines={1}>{b.categorias?.emoji} {b.categorias?.nombre}</Text>
+      {campaniasActivas.length > 0 && (
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.chipsScroll} contentContainerStyle={s.chipsContent}>
+          {campaniasActivas.map(c => {
+            const info = CAMPANIAS[c] || { label: c, emoji: '✨' };
+            const activo = campaniaSel === c;
+            return (
+              <TouchableOpacity
+                key={c}
+                style={[s.campania, activo && s.campaniaOn]}
+                onPress={() => setCampaniaSel(activo ? null : c)}
+              >
+                <Text style={s.campaniaEmoji}>{info.emoji}</Text>
+                <Text style={[s.campaniaTxt, activo && s.campaniaTxtOn]}>{info.label}</Text>
+                {activo && <Ionicons name="close-circle" size={14} color="#fff" />}
               </TouchableOpacity>
-            ))}
-          </ScrollView>
-        </View>
+            );
+          })}
+        </ScrollView>
       )}
 
-      <View style={s.filtroHead}>
-        <Ionicons name="grid-outline" size={15} color={theme.colors.textSecondary} />
-        <Text style={s.filtroHeadTxt}>Categorías</Text>
-        {catsSel.length > 0 && <View style={s.selBadge}><Text style={s.selBadgeTxt}>{catsSel.length}</Text></View>}
-      </View>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.filtrosScroll} contentContainerStyle={s.filtrosContent}>
-        <TouchableOpacity style={[s.chip, catsSel.length === 0 && s.chipActive]} onPress={() => setCatsSel([])}>
-          <Text style={[s.chipText, catsSel.length === 0 && s.chipTextActive]}>Todas</Text>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.chipsScroll} contentContainerStyle={s.chipsContent}>
+        <TouchableOpacity style={[s.chip, catsSel.length === 0 && s.chipOn]} onPress={() => setCatsSel([])}>
+          <Text style={[s.chipTxt, catsSel.length === 0 && s.chipTxtOn]}>Todas</Text>
         </TouchableOpacity>
-        {categorias.map(c => {
+        {catsConDatos.map(c => {
           const activo = catsSel.includes(c.nombre);
           return (
-            <TouchableOpacity key={c.id} style={[s.chip, activo && s.chipActive]} onPress={() => toggleCat(c.nombre)}>
-              {activo && <Ionicons name="checkmark" size={13} color="#fff" />}
-              <Text style={[s.chipText, activo && s.chipTextActive]}>{c.emoji} {c.nombre}</Text>
+            <TouchableOpacity key={c.id} style={[s.chip, activo && s.chipOn]} onPress={() => toggleCat(c.nombre)}>
+              <Text style={[s.chipTxt, activo && s.chipTxtOn]}>{c.emoji} {c.nombre}</Text>
             </TouchableOpacity>
           );
         })}
       </ScrollView>
 
-      <View style={s.section}>
-        <View style={s.sectionHead}>
-          <Text style={s.sectionTitle}>Comercios<Text style={s.sectionCount}>  {comerciosList.length}</Text></Text>
-          {hayFiltro ? <TouchableOpacity onPress={limpiarFiltros}><Text style={s.verTodos}>Limpiar</Text></TouchableOpacity> : null}
-        </View>
-        <View style={s.ordenRow}>
-          <Text style={s.ordenLabel}>Ordenar:</Text>
-          <TouchableOpacity style={[s.ordenChip, orden === 'pct' && s.ordenChipOn]} onPress={() => setOrden('pct')}>
-            <Ionicons name="pricetag" size={12} color={orden === 'pct' ? '#fff' : theme.colors.navy} />
-            <Text style={[s.ordenChipTxt, orden === 'pct' && s.ordenChipTxtOn]}>Mejor %</Text>
+      <View style={[s.bloque, s.secline]}>
+        <Text style={s.seclineTitulo}>
+          {segmento === 'vos' ? 'Con tus tarjetas' : segmento === 'vence' ? 'Vencen pronto' : 'Todos los comercios'}
+        </Text>
+        <Text style={s.seclineCount}>
+          {comercios.length.toLocaleString('es-PY')} comercio{comercios.length === 1 ? '' : 's'}
+        </Text>
+      </View>
+    </View>
+  );
+
+  const vacio = (
+    <View style={s.vacio}>
+      <Ionicons
+        name={segmento === 'vos' ? 'card-outline' : 'search-outline'}
+        size={42}
+        color={theme.colors.textMuted}
+      />
+      {segmento === 'vos' && misTarjetas.length === 0 ? (
+        <>
+          <Text style={s.vacioTxt}>Todavía no cargaste tus tarjetas</Text>
+          <Text style={s.vacioSub}>Cargalas en Perfil y acá vas a ver solo lo que podés usar de verdad.</Text>
+          <TouchableOpacity style={s.vacioBtn} onPress={() => navigation.navigate('Perfil')}>
+            <Text style={s.vacioBtnTxt}>Ir a Perfil</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={[s.ordenChip, orden === 'vence' && s.ordenChipOn]} onPress={() => setOrden('vence')}>
-            <Ionicons name="time" size={12} color={orden === 'vence' ? '#fff' : theme.colors.navy} />
-            <Text style={[s.ordenChipTxt, orden === 'vence' && s.ordenChipTxtOn]}>Vence pronto</Text>
-          </TouchableOpacity>
-        </View>
-        {comerciosList.length === 0 ? (
-          <View style={s.emptyBox}><Ionicons name="search-outline" size={40} color={theme.colors.textMuted} /><Text style={s.emptyText}>No hay comercios para este filtro</Text></View>
-        ) : (
-          <View style={{ gap: 10, paddingHorizontal: 16, marginTop: 4 }}>
-            {comerciosList.slice(0, 120).map(renderMerchant)}
+        </>
+      ) : (
+        <>
+          <Text style={s.vacioTxt}>No hay comercios con estos filtros</Text>
+          {hayFiltro && (
+            <TouchableOpacity style={s.vacioBtn} onPress={limpiarFiltros}>
+              <Text style={s.vacioBtnTxt}>Limpiar filtros</Text>
+            </TouchableOpacity>
+          )}
+        </>
+      )}
+    </View>
+  );
+
+  return (
+    <View style={s.container}>
+      {/* ScrollView y no FlatList: la virtualización de react-native-web se queda
+          clavada en el primer lote y no crece por más que se scrollee. Como la
+          lista está acotada por `limite`, se pintan solo los de la página actual. */}
+      <ScrollView
+        contentContainerStyle={s.lista}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+        onScroll={alScrollear}
+        scrollEventThrottle={32}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={() => { setRefreshing(true); cargar(); }}
+            tintColor={theme.colors.primary}
+            progressViewOffset={60}
+          />
+        }
+      >
+        {cabecera}
+
+        {comercios.length === 0 ? vacio : (
+          <View style={s.tarjetas}>
+            {visibles.map(g => (
+              <ComercioCard key={g.comercio} grupo={g} onPress={() => irAComercio(g.comercio)} />
+            ))}
           </View>
         )}
-      </View>
-      <View style={{ height: 24 }} />
-    </ScrollView>
+
+        {hayMas ? (
+          <View style={s.footer}>
+            <TouchableOpacity style={s.masBtn} activeOpacity={0.85} onPress={verMas}>
+              <Text style={s.masBtnTxt}>
+                Mostrar más ({(comercios.length - limite).toLocaleString('es-PY')} restantes)
+              </Text>
+            </TouchableOpacity>
+          </View>
+        ) : comercios.length > 0 ? (
+          <Text style={s.footerFin}>
+            Eso es todo · {comercios.length.toLocaleString('es-PY')} comercios
+          </Text>
+        ) : null}
+      </ScrollView>
+
+      <BarraCondensada
+        activa={condensada}
+        busqueda={busqueda}
+        setBusqueda={setBusqueda}
+        onFiltros={() => setSheetAbierta(true)}
+        filtrosActivos={filtrosActivos}
+      />
+
+      <TouchableOpacity style={s.fab} activeOpacity={0.85} onPress={() => setSheetAbierta(true)}>
+        <Ionicons name="options-outline" size={18} color="#fff" />
+        <Text style={s.fabTxt}>Filtros</Text>
+        {filtrosActivos > 0 && (
+          <View style={s.fabBadge}><Text style={s.fabBadgeTxt}>{filtrosActivos}</Text></View>
+        )}
+      </TouchableOpacity>
+
+      <FiltrosSheet
+        visible={sheetAbierta}
+        onClose={() => setSheetAbierta(false)}
+        resultados={comercios.length}
+        diasSel={diasSel} toggleDia={toggleDia}
+        bancos={bancosConDatos} bancosSel={bancosSel} toggleBanco={toggleBanco}
+        categorias={catsConDatos} catsSel={catsSel} toggleCat={toggleCat}
+        tipoSel={tipoSel} setTipoSel={setTipoSel}
+        misBancos={misBancos} soloMisBancos={soloMisBancos} setSoloMisBancos={setSoloMisBancos}
+        misTarjetas={misTarjetas} soloPuedoUsar={soloPuedoUsar} setSoloPuedoUsar={setSoloPuedoUsar}
+        onLimpiar={limpiarFiltros} hayFiltro={hayFiltro}
+      />
+    </View>
   );
 }
 
@@ -369,91 +465,91 @@ const s = StyleSheet.create({
   centered: { flex: 1, backgroundColor: theme.colors.bg, alignItems: 'center', justifyContent: 'center', gap: 12 },
   loadTxt: { color: theme.colors.textMuted, fontSize: 13 },
 
-  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, paddingTop: 58, paddingBottom: 8 },
-  headerGreeting: { color: theme.colors.textSecondary, fontSize: 13, fontWeight: '600', marginBottom: 2 },
-  logo: { width: 168, height: 42, marginLeft: -4 },
+  lista: { paddingBottom: 96 },
+  // El hero va a sangre; todo lo demás lleva su propio margen lateral.
+  bloque: { paddingHorizontal: 22 },
+  tarjetas: { paddingHorizontal: 22, gap: 9 },
 
-  searchBox: { marginHorizontal: 16, backgroundColor: theme.colors.bgCard, borderRadius: theme.radius.full, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12, borderWidth: 1, borderColor: theme.colors.border, marginBottom: 10 },
-  searchInput: { flex: 1, color: theme.colors.text, fontSize: 15, marginLeft: 8 },
-
-  avisoBanner: { marginHorizontal: 16, marginBottom: 8, backgroundColor: theme.colors.primaryLight, borderRadius: theme.radius.lg, borderWidth: 1, borderColor: theme.colors.primary + '40', flexDirection: 'row', alignItems: 'center', gap: 12, padding: 12 },
-  avisoIcon: { width: 36, height: 36, borderRadius: 10, backgroundColor: theme.colors.primary, alignItems: 'center', justifyContent: 'center' },
+  aviso: {
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    marginTop: 14, padding: 12,
+    backgroundColor: theme.colors.primaryLight,
+    borderRadius: theme.radius.lg,
+    borderWidth: 1, borderColor: theme.colors.primary + '40',
+  },
+  avisoIcon: {
+    width: 34, height: 34, borderRadius: 10,
+    backgroundColor: theme.colors.primary, alignItems: 'center', justifyContent: 'center',
+  },
   avisoTitulo: { color: theme.colors.primaryDark, fontSize: 13, fontWeight: '800' },
   avisoCuerpo: { color: theme.colors.text, fontSize: 13, marginTop: 1 },
 
-  togglesRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, paddingHorizontal: 16, marginBottom: 6 },
-  toggle: { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: theme.colors.bgCard, borderRadius: theme.radius.full, paddingHorizontal: 12, paddingVertical: 7, borderWidth: 1, borderColor: theme.colors.border },
-  toggleOn: { backgroundColor: theme.colors.navy, borderColor: theme.colors.navy },
-  toggleTxt: { color: theme.colors.navy, fontSize: 12, fontWeight: '700' },
-  toggleTxtOn: { color: '#fff' },
-  toggleHint: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: theme.colors.primaryLight, borderRadius: theme.radius.full, paddingHorizontal: 12, paddingVertical: 7 },
-  toggleHintTxt: { color: theme.colors.primaryDark, fontSize: 12, fontWeight: '700' },
+  segmento: { flexDirection: 'row', gap: 6, marginTop: 18 },
+  seg: {
+    flex: 1, height: 38, borderRadius: 12,
+    alignItems: 'center', justifyContent: 'center',
+    backgroundColor: theme.colors.bgCardAlt,
+  },
+  segOn: { backgroundColor: theme.colors.navy },
+  segTxt: { color: theme.colors.textSecondary, fontSize: 13, fontWeight: '700' },
+  segTxtOn: { color: '#fff' },
 
-  hero: { marginHorizontal: 16, backgroundColor: theme.colors.navy, borderRadius: theme.radius.xl, padding: 20, flexDirection: 'row', alignItems: 'center', marginBottom: 8 },
-  heroKicker: { color: 'rgba(255,255,255,0.75)', fontSize: 13, fontWeight: '600' },
-  heroBig: { color: '#fff', fontSize: 38, fontWeight: '900', letterSpacing: -1, marginTop: 2 },
-  heroSub: { color: 'rgba(255,255,255,0.8)', fontSize: 13 },
-  heroIcon: { width: 60, height: 60, borderRadius: 18, backgroundColor: theme.colors.primary, alignItems: 'center', justifyContent: 'center' },
+  chipsScroll: { flexGrow: 0, marginTop: 14 },
+  chipsContent: { paddingHorizontal: 22, gap: 8 },
+  chip: {
+    flexDirection: 'row', alignItems: 'center', gap: 5,
+    height: 36, paddingHorizontal: 13, borderRadius: 12,
+    backgroundColor: theme.colors.bgCard,
+    borderWidth: 1, borderColor: theme.colors.border,
+  },
+  chipOn: { backgroundColor: theme.colors.navy, borderColor: theme.colors.navy },
+  chipTxt: { color: theme.colors.textSecondary, fontSize: 12.5, fontWeight: '600' },
+  chipTxtOn: { color: '#fff', fontWeight: '700' },
 
-  calcBtn: { marginHorizontal: 16, marginTop: 10, backgroundColor: theme.colors.bgCard, borderRadius: theme.radius.lg, borderWidth: 1, borderColor: theme.colors.border, flexDirection: 'row', alignItems: 'center', gap: 12, padding: 14 },
-  calcIcon: { width: 40, height: 40, borderRadius: 12, backgroundColor: theme.colors.primaryLight, alignItems: 'center', justifyContent: 'center' },
-  calcTitle: { color: theme.colors.text, fontSize: 15, fontWeight: '800' },
-  calcSub: { color: theme.colors.textSecondary, fontSize: 12, marginTop: 1 },
+  campania: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    height: 36, paddingHorizontal: 13, borderRadius: 12,
+    backgroundColor: theme.colors.primaryLight,
+    borderWidth: 1, borderColor: theme.colors.primary + '55',
+  },
+  campaniaOn: { backgroundColor: theme.colors.primary, borderColor: theme.colors.primary },
+  campaniaEmoji: { fontSize: 15 },
+  campaniaTxt: { color: theme.colors.primaryDark, fontSize: 12.5, fontWeight: '700' },
+  campaniaTxtOn: { color: '#fff' },
 
-  campBtn: { marginHorizontal: 16, marginTop: 10, backgroundColor: theme.colors.primaryLight, borderRadius: theme.radius.lg, borderWidth: 1, borderColor: theme.colors.primary + '55', flexDirection: 'row', alignItems: 'center', gap: 12, padding: 14 },
-  campBtnOn: { backgroundColor: theme.colors.primary, borderColor: theme.colors.primary },
-  campEmoji: { fontSize: 24 },
-  campTitle: { color: theme.colors.primaryDark, fontSize: 15, fontWeight: '800' },
-  campTitleOn: { color: '#fff' },
-  campSub: { color: theme.colors.primaryDark, fontSize: 12, marginTop: 1, opacity: 0.8 },
-  campSubOn: { color: 'rgba(255,255,255,0.9)', opacity: 1 },
+  secline: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', marginTop: 22, marginBottom: 11 },
+  seclineTitulo: { color: theme.colors.text, fontSize: 17.5, fontWeight: '800', letterSpacing: -0.3 },
+  seclineCount: { color: theme.colors.primary, fontSize: 12.5, fontWeight: '700' },
 
-  filtroHead: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 18, marginTop: 14, marginBottom: 2 },
-  filtroHeadTxt: { color: theme.colors.textSecondary, fontSize: 13, fontWeight: '700' },
-  selBadge: { backgroundColor: theme.colors.primary, borderRadius: theme.radius.full, minWidth: 18, height: 18, paddingHorizontal: 5, alignItems: 'center', justifyContent: 'center' },
-  selBadgeTxt: { color: '#fff', fontSize: 11, fontWeight: '800' },
-  filtrosScroll: { flexGrow: 0, marginVertical: 6 },
-  filtrosContent: { paddingHorizontal: 16, gap: 8 },
-  chip: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: theme.colors.bgCard, borderRadius: theme.radius.full, paddingHorizontal: 15, paddingVertical: 8, borderWidth: 1, borderColor: theme.colors.border },
-  chipActive: { backgroundColor: theme.colors.navy, borderColor: theme.colors.navy },
-  chipText: { color: theme.colors.textSecondary, fontSize: 13, fontWeight: '600' },
-  chipTextActive: { color: '#fff', fontWeight: '700' },
-  bancoDot: { width: 8, height: 8, borderRadius: 4 },
+  footer: { paddingVertical: 22, alignItems: 'center', paddingHorizontal: 22 },
+  masBtn: {
+    backgroundColor: theme.colors.navy, borderRadius: theme.radius.full,
+    paddingHorizontal: 24, paddingVertical: 13,
+  },
+  masBtnTxt: { color: '#fff', fontSize: 14, fontWeight: '700' },
+  footerFin: { textAlign: 'center', color: theme.colors.textMuted, fontSize: 12.5, paddingVertical: 22 },
 
-  section: { marginTop: 14 },
-  sectionHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 16, marginBottom: 10 },
-  sectionTitle: { color: theme.colors.text, fontSize: 17, fontWeight: '800' },
-  sectionCount: { color: theme.colors.textMuted, fontWeight: '600', fontSize: 14 },
-  verTodos: { color: theme.colors.primary, fontWeight: '700', fontSize: 13 },
+  vacio: { alignItems: 'center', paddingVertical: 44, gap: 10 },
+  vacioTxt: { color: theme.colors.text, fontSize: 15.5, fontWeight: '700', marginTop: 6 },
+  vacioSub: { color: theme.colors.textMuted, fontSize: 13, textAlign: 'center', lineHeight: 19, paddingHorizontal: 20 },
+  vacioBtn: {
+    marginTop: 6, backgroundColor: theme.colors.navy,
+    borderRadius: theme.radius.md, paddingHorizontal: 20, paddingVertical: 11,
+  },
+  vacioBtnTxt: { color: '#fff', fontSize: 14, fontWeight: '700' },
 
-  cardDestacado: { width: 168, backgroundColor: theme.colors.bgCard, borderRadius: theme.radius.lg, borderWidth: 1, borderColor: theme.colors.border, padding: 14 },
-  cardDestTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 },
-  pctBadge: { backgroundColor: theme.colors.primary, borderRadius: theme.radius.sm, paddingHorizontal: 9, paddingVertical: 4 },
-  pctBadgeTxt: { color: '#fff', fontWeight: '800', fontSize: 14 },
-  cardDestComercio: { color: theme.colors.text, fontSize: 15, fontWeight: '700' },
-  cardDestBanco: { color: theme.colors.textSecondary, fontSize: 12, marginTop: 2 },
-  cardDestCat: { color: theme.colors.textMuted, fontSize: 12, marginTop: 6 },
-
-  card: { backgroundColor: theme.colors.bgCard, borderRadius: theme.radius.lg, borderWidth: 1, borderColor: theme.colors.border, flexDirection: 'row', alignItems: 'center', padding: 12, gap: 12 },
-  mLogo: { width: 46, height: 46, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
-  mLogoTxt: { fontSize: 20, fontWeight: '800', color: theme.colors.navy },
-  cardComercio: { color: theme.colors.text, fontSize: 15, fontWeight: '700' },
-  cardSub: { color: theme.colors.textSecondary, fontSize: 12, marginTop: 2 },
-  cardTagsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 6 },
-  tagAplica: { flexDirection: 'row', alignItems: 'center', gap: 3, backgroundColor: '#E7F8F0', borderRadius: theme.radius.full, paddingHorizontal: 8, paddingVertical: 3, alignSelf: 'flex-start' },
-  tagAplicaTxt: { color: theme.colors.success, fontSize: 11, fontWeight: '700' },
-  tagVence: { flexDirection: 'row', alignItems: 'center', gap: 3, backgroundColor: '#FDECEC', borderRadius: theme.radius.full, paddingHorizontal: 8, paddingVertical: 3, alignSelf: 'flex-start' },
-  tagVenceTxt: { color: theme.colors.danger, fontSize: 11, fontWeight: '700' },
-  ordenRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 16, marginBottom: 12 },
-  ordenLabel: { color: theme.colors.textSecondary, fontSize: 12, fontWeight: '600' },
-  ordenChip: { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: theme.colors.bgCard, borderRadius: theme.radius.full, paddingHorizontal: 12, paddingVertical: 7, borderWidth: 1, borderColor: theme.colors.border },
-  ordenChipOn: { backgroundColor: theme.colors.navy, borderColor: theme.colors.navy },
-  ordenChipTxt: { color: theme.colors.navy, fontSize: 12, fontWeight: '700' },
-  ordenChipTxtOn: { color: '#fff' },
-  cardRight: { alignItems: 'flex-end', gap: 6 },
-  pct: { backgroundColor: theme.colors.primary, borderRadius: theme.radius.md, paddingHorizontal: 10, paddingVertical: 6, alignItems: 'center' },
-  pctTxt: { color: '#fff', fontWeight: '800', fontSize: 13 },
-
-  emptyBox: { alignItems: 'center', padding: 40, gap: 12 },
-  emptyText: { color: theme.colors.textMuted, fontSize: 15 },
+  fab: {
+    position: 'absolute', alignSelf: 'center', bottom: 18,
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    height: 46, paddingHorizontal: 20, borderRadius: theme.radius.full,
+    backgroundColor: theme.colors.navy,
+    shadowColor: theme.colors.navy, shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.32, shadowRadius: 18, elevation: 6,
+  },
+  fabTxt: { color: '#fff', fontSize: 14, fontWeight: '700' },
+  fabBadge: {
+    minWidth: 20, height: 20, paddingHorizontal: 6, borderRadius: 10,
+    backgroundColor: theme.colors.mint, alignItems: 'center', justifyContent: 'center',
+  },
+  fabBadgeTxt: { color: theme.colors.mintInk, fontSize: 11.5, fontWeight: '800' },
 });
