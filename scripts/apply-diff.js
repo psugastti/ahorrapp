@@ -34,7 +34,7 @@ const UMBRAL_EMPAREJADOS = 0.8; // cuántos de la base encuentro por nombre
 
 const log = (...a) => console.log(...a);
 const resumen = {
-  vencidos: 0, desaparecidos: 0, vigencia_corregida: 0, topes_completados: 0, dias_completados: 0,
+  vencidos: 0, desaparecidos: 0, vigencia_corregida: 0, topes_completados: 0, dias_completados: 0, tipo_corregido: 0,
   links_completados: 0, verificados: 0, encolados: 0, bancos_frenados: [],
 };
 
@@ -191,7 +191,24 @@ for (const [bancoId, filas] of porBanco) {
           ` Fuente: ${f.link_oficial || f.fuente}`,
       });
     }
-    if (!soloPresencia && f.tipo_beneficio && b.tipo_beneficio && f.tipo_beneficio !== b.tipo_beneficio) {
+    // "descuento → reintegro" se aplica solo cuando la fuente lo dice textualmente
+    // ("20% de reintegro"): mismo criterio que la vigencia. Para el usuario no es lo
+    // mismo (el reintegro llega después, al extracto) y la base lo tenía mal en ~165.
+    // Queda registrado en la cola como 'aplicado_auto' para que haya rastro.
+    const textoFuente = `${f.payload?.observacion ?? ''} ${f.payload?.tipo_beneficio ?? ''}`;
+    const reintegroTextual =
+      f.tipo_beneficio === 'reintegro' && b.tipo_beneficio === 'descuento' && /reintegro/i.test(textoFuente);
+    if (!soloPresencia && reintegroTextual) {
+      campos.tipo_beneficio = 'reintegro';
+      resumen.tipo_corregido++;
+      cola.push({
+        fecha: hoy, banco_id: bancoId, banco_nombre: nombre,
+        tipo_cambio: 'tipo_beneficio', comercio: b.comercio, beneficio_id: b.id,
+        descripcion_anterior: 'descuento', descripcion_nuevo: 'reintegro',
+        estado: 'aplicado_auto',
+        notas: `La fuente dice "reintegro" textualmente. Fuente: ${f.link_oficial || f.fuente}`,
+      });
+    } else if (!soloPresencia && f.tipo_beneficio && b.tipo_beneficio && f.tipo_beneficio !== b.tipo_beneficio) {
       coincide = false;
       cola.push({
         fecha: hoy, banco_id: bancoId, banco_nombre: nombre,
@@ -250,7 +267,7 @@ for (const [bancoId, filas] of porBanco) {
     }
   }
 }
-resumen.encolados = cola.length;
+resumen.encolados = cola.filter((c) => c.estado === 'pendiente').length;
 
 // ---------- reporte ----------
 log(`\n=== Diff ${hoy} ===`);
@@ -261,11 +278,12 @@ log(`    vencidos dados de baja   : ${resumen.vencidos}`);
 log(`    vigencia corregida       : ${resumen.vigencia_corregida}`);
 log(`    topes completados        : ${resumen.topes_completados}`);
 log(`    días completados         : ${resumen.dias_completados}`);
+log(`    descuento→reintegro      : ${resumen.tipo_corregido}  (la fuente lo dice textual)`);
 log(`    links completados        : ${resumen.links_completados}`);
 log(`    sellados verificado_en   : ${resumen.verificados}`);
 log(`\n  A LA COLA (necesitan tu OK): ${resumen.encolados}`);
 for (const t of ['baja', 'porcentaje', 'dias', 'tipo_beneficio', 'alta']) {
-  const n = cola.filter((c) => c.tipo_cambio === t).length;
+  const n = cola.filter((c) => c.tipo_cambio === t && c.estado === 'pendiente').length;
   if (n) log(`    ${t.padEnd(16)} ${n}`);
 }
 if (resumen.bancos_frenados.length) {
