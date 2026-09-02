@@ -6,7 +6,7 @@ export const banco = 'GNB';
 export const fuente = 'GNB catálogo oficial';
 export const requiereNavegador = true; // 403 con fetch: tiene anti-bot
 
-const PAGINA = 'https://beneficiosbancognb.com.py/';
+const PAGINA = 'https://www.beneficiosbancognb.com.py/beneficios/';
 
 export async function run() {
   const html = await conNavegador(PAGINA, { esperar: '.card, .beneficio, article' });
