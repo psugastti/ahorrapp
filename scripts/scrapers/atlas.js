@@ -27,6 +27,7 @@ export async function run() {
     return out.push({
       comercio,
       porcentaje: N.parsePorcentajeMax(card.attr('data-pct') || texto),
+      porcentajes: N.parsePorcentajes(texto),
       tipo_beneficio: N.parseTipo(texto),
       dias,
       todos_los_dias: todosLosDias,

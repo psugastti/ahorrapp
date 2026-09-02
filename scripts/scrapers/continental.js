@@ -16,6 +16,7 @@ export async function run() {
     return {
       comercio: N.limpiar(c.nombre),
       porcentaje: c.porcentaje_ahorro?.porcentaje_ahorro ?? N.parsePorcentajeMax(desc),
+      porcentajes: N.parsePorcentajes(desc),
       tipo_beneficio: N.parseTipo(desc),
       dias,
       todos_los_dias: todosLosDias,

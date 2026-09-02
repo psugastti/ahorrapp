@@ -15,16 +15,22 @@
  *   - cambios de porcentaje, días o tipo de beneficio
  *   - comercios nuevos que la fuente publica y la base no tiene
  *
- * FRENO DE MANO: si un banco trae menos del 50% de lo que tenía, se asume que
- * el sitio cambió de formato y NO se da de baja nada de ese banco.
+ * FRENOS DE MANO para las bajas: un banco solo puede aportar bajas si el scraper
+ * leyó al menos el 90% de lo que tiene cargado Y empareja por nombre al menos el
+ * 80% de sus comercios. Si no, lo que falta es cobertura del scraper, no comercios
+ * cerrados.
  */
 import { db, selectAll } from './lib/db.js';
 import { claveComercio, claveBase } from './lib/normalize.js';
 
 const DRY = process.argv.includes('--dry-run');
 const hoy = new Date().toISOString().slice(0, 10);
-const UMBRAL_CAIDA = 0.5;
-const UMBRAL_EMPAREJADOS = 0.5;
+// Umbrales para permitir BAJAS. Son altos a propósito: concluir que un comercio
+// dejó de existir exige haber leído el catálogo entero, no una parte. Familiar
+// publica 425 beneficios y el scraper ve 316 (los que enlazan bases en PDF): con
+// un umbral bajo, los 109 que no lee parecían cerrados y no lo están.
+const UMBRAL_COBERTURA = 0.9;   // leído / cargado en base
+const UMBRAL_EMPAREJADOS = 0.8; // cuántos de la base encuentro por nombre
 
 const log = (...a) => console.log(...a);
 const resumen = {
@@ -72,10 +78,13 @@ for (const [bancoId, filas] of porBanco) {
   const enBase = beneficios.filter((b) => b.banco_id === bancoId);
   const soloPresencia = filas.every((f) => f.solo_presencia);
 
-  // freno 1: el banco trae mucho menos de lo que tenía
-  let puedeDarDeBaja = enBase.length === 0 || filas.length / enBase.length >= UMBRAL_CAIDA;
+  // freno 1: cobertura. Si no leí casi todo el catálogo, no puedo saber qué falta.
+  const cobertura = enBase.length === 0 ? 1 : filas.length / enBase.length;
+  let puedeDarDeBaja = cobertura >= UMBRAL_COBERTURA;
   if (!puedeDarDeBaja) {
-    resumen.bancos_frenados.push(`${nombre}: leyó ${filas.length} vs ${enBase.length} en base`);
+    resumen.bancos_frenados.push(
+      `${nombre}: leyó ${filas.length} de ${enBase.length} (${Math.round(cobertura * 100)}%)`
+    );
   }
 
   // Se indexa por la clave completa y por la clave sin sufijo de local, porque
@@ -97,7 +106,8 @@ for (const [bancoId, filas] of porBanco) {
     if (emparejables / enBase.length < UMBRAL_EMPAREJADOS) {
       puedeDarDeBaja = false;
       resumen.bancos_frenados.push(
-        `${nombre}: solo emparejó ${emparejables} de ${enBase.length} comercios por nombre`
+        `${nombre}: emparejó ${emparejables} de ${enBase.length} por nombre ` +
+          `(${Math.round((emparejables / enBase.length) * 100)}%)`
       );
     }
   }
@@ -141,7 +151,13 @@ for (const [bancoId, filas] of porBanco) {
     if (!b.url_bases && f.url_bases) { campos.url_bases = f.url_bases; resumen.links_completados++; }
 
     // --- lo que NO se toca solo ---
-    if (!soloPresencia && f.porcentaje != null && b.porcentaje != null && f.porcentaje !== b.porcentaje) {
+    // Varios bancos publican tramos ("20% o 25% según tu tarjeta"). Si lo que tiene
+    // la base es uno de esos tramos, no cambió nada: el scraper solo vio el otro.
+    const tramos = f.payload?.porcentajes ?? (f.porcentaje != null ? [f.porcentaje] : []);
+    const yaEsUnTramo = b.porcentaje != null && tramos.includes(b.porcentaje);
+
+    if (!soloPresencia && f.porcentaje != null && b.porcentaje != null &&
+        f.porcentaje !== b.porcentaje && !yaEsUnTramo) {
       coincide = false;
       cola.push({
         fecha: hoy, banco_id: bancoId, banco_nombre: nombre,
@@ -149,7 +165,10 @@ for (const [bancoId, filas] of porBanco) {
         porcentaje_anterior: b.porcentaje, porcentaje_nuevo: f.porcentaje,
         descripcion_anterior: `${b.porcentaje}%`, descripcion_nuevo: `${f.porcentaje}%`,
         estado: 'pendiente',
-        notas: `Detectado por scraper automático. Fuente: ${f.link_oficial || f.fuente}`,
+        notas:
+          `Detectado por scraper automático.` +
+          (tramos.length > 1 ? ` La fuente publica tramos: ${tramos.join('% / ')}%.` : '') +
+          ` Fuente: ${f.link_oficial || f.fuente}`,
       });
     }
     if (!soloPresencia && f.tipo_beneficio && b.tipo_beneficio && f.tipo_beneficio !== b.tipo_beneficio) {

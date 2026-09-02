@@ -22,6 +22,7 @@ export async function run() {
       comercio,
       // El número grande a veces es "6" (cuotas) y no un %: solo se toma si trae %.
       porcentaje: N.parsePorcentaje(destacado) ?? N.parsePorcentajeMax(texto),
+      porcentajes: N.parsePorcentajes(texto),
       tipo_beneficio: N.parseTipo(texto) || (/^\d+$/.test(destacado) ? 'cuotas' : null),
       dias,
       todos_los_dias: todosLosDias,

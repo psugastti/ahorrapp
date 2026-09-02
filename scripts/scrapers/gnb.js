@@ -55,6 +55,7 @@ export async function run() {
         comercio: N.limpiar(b.title),
         // circleText es el % destacado ("-25%"); si falta, se busca en el texto
         porcentaje: N.parsePorcentajeMax(b.circleText) ?? N.parsePorcentajeMax(texto),
+        porcentajes: N.parsePorcentajes(texto),
         tipo_beneficio: N.parseTipo(texto),
         dias,
         todos_los_dias: todosLosDias,

@@ -47,13 +47,24 @@ export function parsePorcentaje(txt) {
   return n > 0 && n <= 100 ? n : null;
 }
 
-/** Cuando la fuente da un rango escalonado ("hasta 25%"), devuelve el máximo. */
-export function parsePorcentajeMax(txt) {
+/**
+ * TODOS los porcentajes que aparecen en el texto, ordenados.
+ * Importa porque varios bancos publican tramos: Interfisa dice "20% o 25% de
+ * reintegro" según la tarjeta. Quedarse solo con uno hace que el otro parezca
+ * un cambio de porcentaje cuando no lo es.
+ */
+export function parsePorcentajes(txt) {
   const t = limpiar(txt);
   const todos = [...t.matchAll(/(\d{1,2})(?:[.,]\d+)?\s*%/g)]
     .map((m) => parseInt(m[1], 10))
     .filter((n) => n > 0 && n <= 100);
-  return todos.length ? Math.max(...todos) : null;
+  return [...new Set(todos)].sort((a, b) => a - b);
+}
+
+/** El máximo de los porcentajes del texto ("hasta 25%"). */
+export function parsePorcentajeMax(txt) {
+  const todos = parsePorcentajes(txt);
+  return todos.length ? todos[todos.length - 1] : null;
 }
 
 /** "Vigente hasta el 11 de noviembre de 2026" | "31/12/2026" -> "2026-11-11" */
@@ -100,12 +111,20 @@ export function parseDias(txt) {
   return { dias: [...found], todosLosDias: false };
 }
 
-/** descuento | reintegro | cuotas — solo si la fuente lo dice. */
+/**
+ * descuento | reintegro | cuotas — solo si la fuente lo dice.
+ * Ojo con el orden: muchas promos son "20% de descuento + 6 cuotas sin intereses".
+ * Ahí el beneficio es el descuento; las cuotas son el extra. Por eso 'cuotas' solo
+ * gana cuando NO hay un porcentaje en juego.
+ */
 export function parseTipo(txt) {
   const t = limpiar(txt).toLowerCase();
+  const hayPorcentaje = parsePorcentajes(t).length > 0;
   if (/reintegro|cashback|devoluci[oó]n/.test(t)) return 'reintegro';
-  if (/cuotas?\s+sin\s+inter[eé]s|sin\s+intereses/.test(t)) return 'cuotas';
   if (/descuento|%\s*(de\s+)?desc/.test(t)) return 'descuento';
+  if (/cuotas?\s+sin\s+inter[eé]s|sin\s+intereses/.test(t)) {
+    return hayPorcentaje ? 'descuento' : 'cuotas';
+  }
   return null;
 }
 

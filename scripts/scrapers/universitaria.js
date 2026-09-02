@@ -40,6 +40,7 @@ export async function run() {
       out.push({
         comercio,
         porcentaje: N.parsePorcentajeMax(`${detalle} ${cuando}`),
+        porcentajes: N.parsePorcentajes(`${detalle} ${cuando}`),
         tipo_beneficio: N.parseTipo(`${detalle} ${cuando}`),
         dias,
         todos_los_dias: todosLosDias,
