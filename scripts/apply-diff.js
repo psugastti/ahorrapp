@@ -23,6 +23,7 @@ import { claveComercio } from './lib/normalize.js';
 const DRY = process.argv.includes('--dry-run');
 const hoy = new Date().toISOString().slice(0, 10);
 const UMBRAL_CAIDA = 0.5;
+const UMBRAL_EMPAREJADOS = 0.5;
 
 const log = (...a) => console.log(...a);
 const resumen = {
@@ -70,16 +71,29 @@ for (const [bancoId, filas] of porBanco) {
   const enBase = beneficios.filter((b) => b.banco_id === bancoId);
   const soloPresencia = filas.every((f) => f.solo_presencia);
 
-  // freno de mano
-  const puedeDarDeBaja = enBase.length === 0 || filas.length / enBase.length >= UMBRAL_CAIDA;
+  // freno 1: el banco trae mucho menos de lo que tenía
+  let puedeDarDeBaja = enBase.length === 0 || filas.length / enBase.length >= UMBRAL_CAIDA;
   if (!puedeDarDeBaja) {
-    resumen.bancos_frenados.push(`${nombre} (${filas.length} leídos vs ${enBase.length} en base)`);
+    resumen.bancos_frenados.push(`${nombre}: leyó ${filas.length} vs ${enBase.length} en base`);
   }
 
   const porClave = new Map();
   for (const f of filas) {
-    const k = f.clave || claveComercio(f.comercio);
+    const k = claveComercio(f.comercio); // NUNCA f.clave: la genera Postgres con otra regla
     if (!porClave.has(k)) porClave.set(k, f);
+  }
+
+  // freno 2: si el emparejamiento por nombre falla en masa, no son bajas reales,
+  // es que cambió el formato del sitio (o la normalización de nombres).
+  if (puedeDarDeBaja && enBase.length >= 20) {
+    const clavesFuente = new Set([...porClave.keys()]);
+    const emparejables = enBase.filter((b) => clavesFuente.has(claveComercio(b.comercio))).length;
+    if (emparejables / enBase.length < UMBRAL_EMPAREJADOS) {
+      puedeDarDeBaja = false;
+      resumen.bancos_frenados.push(
+        `${nombre}: solo emparejó ${emparejables} de ${enBase.length} comercios por nombre`
+      );
+    }
   }
 
   const emparejados = new Set();

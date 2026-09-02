@@ -6,6 +6,8 @@ export const banco = 'GNB';
 export const fuente = 'GNB catálogo oficial';
 export const requiereNavegador = true; // 403 con fetch: tiene anti-bot
 
+// Con el dominio pelado el certificado no valida (ERR_SSL_UNRECOGNIZED_NAME_ALERT):
+// hay que entrar por www. Y el catálogo vive en /beneficios/, no en la raíz.
 const PAGINA = 'https://www.beneficiosbancognb.com.py/beneficios/';
 
 export async function run() {

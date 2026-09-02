@@ -4,7 +4,6 @@
 import { SCRAPERS } from './scrapers/index.js';
 import { cerrarNavegador } from './lib/navegador.js';
 import { db, selectAll } from './lib/db.js';
-import { claveComercio } from './lib/normalize.js';
 
 const args = process.argv.slice(2);
 const DRY = args.includes('--dry-run');
@@ -20,6 +19,15 @@ async function correrBanco(mod) {
   try {
     const filas = await mod.run();
     const limpias = filas.filter((f) => f.comercio && f.comercio.length > 1);
+    // 0 filas casi siempre significa que el sitio cambió de formato, no que el
+    // banco se quedó sin beneficios. Se marca como error para que NO entre al diff.
+    if (limpias.length === 0) {
+      return {
+        banco: mod.banco, fuente: mod.fuente, ok: false,
+        error: 'devolvió 0 beneficios (¿cambió el HTML?)',
+        filas: [], segundos: ((Date.now() - inicio) / 1000).toFixed(1),
+      };
+    }
     return {
       banco: mod.banco, fuente: mod.fuente, ok: true,
       filas: limpias, segundos: ((Date.now() - inicio) / 1000).toFixed(1),
@@ -77,7 +85,6 @@ for (const r of resultados) {
       banco: r.banco,
       banco_id: bancoId,
       comercio: f.comercio,
-      clave: claveComercio(f.comercio),
       rubro: f.rubro ?? null,
       porcentaje: f.porcentaje ?? null,
       vence: f.vence ?? null,

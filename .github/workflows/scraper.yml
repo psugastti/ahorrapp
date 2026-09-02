@@ -6,8 +6,8 @@ on:
     - cron: '0 11 * * 1'   # lunes 08:00 en Paraguay (UTC-3)
   workflow_dispatch:        # y el botón "Run workflow" para correrlo cuando quieras
     inputs:
-      solo_leer:
-        description: 'Solo leer los bancos, sin tocar la base'
+      simulacion:
+        description: 'Simulación: lee todo y muestra qué cambiaría, sin tocar beneficios'
         type: boolean
         default: false
 
@@ -17,6 +17,9 @@ jobs:
     timeout-minutes: 30
     defaults:
       run:
+        # `shell: bash` activa pipefail: sin eso, `node ... | tee` deja el paso
+        # en verde aunque node haya fallado (nos pasó en la corrida #2).
+        shell: bash
         working-directory: scripts
 
     steps:
@@ -34,13 +37,15 @@ jobs:
       - name: Instalar Chrome headless (para GNB e Itaú)
         run: npx playwright install --with-deps chromium
 
+      # Siempre se escribe staging_scrape: es una tabla de trabajo, se pisa en cada
+      # corrida y no la ve nadie desde la app.
       - name: Leer todos los bancos
         env:
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
-        run: node run-all.js ${{ inputs.solo_leer && '--dry-run' || '' }} | tee $GITHUB_STEP_SUMMARY
+        run: node run-all.js | tee $GITHUB_STEP_SUMMARY
 
+      # En simulación el diff reporta qué haría y no toca `beneficios`.
       - name: Aplicar cambios seguros y encolar el resto
-        if: ${{ !inputs.solo_leer }}
         env:
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
-        run: node apply-diff.js | tee -a $GITHUB_STEP_SUMMARY
+        run: node apply-diff.js ${{ inputs.simulacion == true && '--dry-run' || '' }} | tee -a $GITHUB_STEP_SUMMARY
