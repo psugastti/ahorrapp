@@ -1,0 +1,46 @@
+name: Scraper de beneficios
+
+# Corre TODOS los bancos de una sola vez.
+on:
+  schedule:
+    - cron: '0 11 * * 1'   # lunes 08:00 en Paraguay (UTC-3)
+  workflow_dispatch:        # y el botón "Run workflow" para correrlo cuando quieras
+    inputs:
+      solo_leer:
+        description: 'Solo leer los bancos, sin tocar la base'
+        type: boolean
+        default: false
+
+jobs:
+  scrapear:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: scripts
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: scripts/package-lock.json
+
+      - name: Instalar dependencias
+        run: npm ci || npm install
+
+      - name: Instalar Chrome headless (para GNB e Itaú)
+        run: npx playwright install --with-deps chromium
+
+      - name: Leer todos los bancos
+        env:
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: node run-all.js ${{ inputs.solo_leer && '--dry-run' || '' }} | tee $GITHUB_STEP_SUMMARY
+
+      - name: Aplicar cambios seguros y encolar el resto
+        if: ${{ !inputs.solo_leer }}
+        env:
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: node apply-diff.js | tee -a $GITHUB_STEP_SUMMARY
