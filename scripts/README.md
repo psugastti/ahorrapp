@@ -18,7 +18,7 @@ apply-diff.js   compara staging vs beneficios → aplica lo seguro, encola lo du
 scrapers/       un archivo por banco
 lib/normalize.js  parseo de %, días, fechas y topes (nunca inventa)
 lib/http.js     fetch con reintentos y respaldo por curl
-lib/navegador.js Chrome headless para las fuentes con anti-bot
+lib/navegador.js Chrome headless — hoy sin uso, queda para Itaú
 ```
 
 ## Qué se aplica solo y qué no
@@ -49,10 +49,14 @@ el sitio cambió de formato y no se da de baja nada de ese banco. Queda en el re
 | Sudameris | una página de detalle por beneficio | 48 |
 | Solar | HTML | 25 |
 | Atlas | atributos `data-pct` / `data-desc` | 12 |
+| GNB | **API oficial** (`/v2/apis/rewards/.../benefits?pageSize=1000`) | 225 |
 | Ueno | avisa que salió el PDF del mes (los comercios son logos) | aviso |
-| GNB | Chrome headless (Akamai bloquea fetch) | 202 |
 
 Itaú sigue a mano: sus páginas de detalle requieren navegador con sesión.
+
+**Ningún scraper usa navegador hoy.** GNB parecía necesitarlo (Akamai + Angular), pero
+su sitio nuevo `/v2/` se alimenta de una API pública que responde a un fetch común.
+Por eso el workflow ya no instala Chrome headless.
 
 ## Credenciales
 

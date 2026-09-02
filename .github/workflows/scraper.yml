@@ -34,8 +34,9 @@ jobs:
       - name: Instalar dependencias
         run: npm ci || npm install
 
-      - name: Instalar Chrome headless (para GNB e Itaú)
-        run: npx playwright install --with-deps chromium
+      # Ya no se instala Chrome headless: GNB pasó a leerse por su API y hoy
+      # ningún scraper usa navegador. Si vuelve a hacer falta (Itaú), reponer:
+      #   - run: npx playwright install --with-deps chromium
 
       # Siempre se escribe staging_scrape: es una tabla de trabajo, se pisa en cada
       # corrida y no la ve nadie desde la app.
