@@ -27,6 +27,16 @@ export function claveComercio(nombre) {
     .trim();
 }
 
+/**
+ * Variante de la clave sin el sufijo de local/sucursal.
+ * Familiar publica "ACADEMY-SHOPPING MARISCAL" y la base guarda "Academy":
+ * sin esto el comercio parece desaparecido del catálogo cuando solo cambió el rótulo.
+ */
+export function claveBase(nombre) {
+  const k = claveComercio(String(nombre).split(/\s[-–]\s|[-–](?=[A-ZÁÉÍÓÚÑ ]{4,}$)/)[0]);
+  return k.length >= 3 ? k : claveComercio(nombre);
+}
+
 /** Extrae el % SOLO si aparece explícito. Devuelve null si no hay. */
 export function parsePorcentaje(txt) {
   const t = limpiar(txt);

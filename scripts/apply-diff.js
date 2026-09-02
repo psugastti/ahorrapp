@@ -5,12 +5,13 @@
  *
  * AUTO-APLICA (reversible, siempre con respaldo en auditoria_bajas):
  *   - vencidos: activo=true y vence < hoy
- *   - desaparecidos del catálogo del banco
  *   - vigencia extendida por la fuente
  *   - completar link_oficial / url_bases vacíos
  *   - sellar verificado_en cuando el dato coincide
  *
  * ENCOLA en cambios_scraping (requiere aprobación de Pablo):
+ *   - comercios que ya no figuran en el catálogo (depende de emparejar nombres,
+ *     que es frágil: un cambio de rótulo del banco parece un cierre)
  *   - cambios de porcentaje, días o tipo de beneficio
  *   - comercios nuevos que la fuente publica y la base no tiene
  *
@@ -18,7 +19,7 @@
  * el sitio cambió de formato y NO se da de baja nada de ese banco.
  */
 import { db, selectAll } from './lib/db.js';
-import { claveComercio } from './lib/normalize.js';
+import { claveComercio, claveBase } from './lib/normalize.js';
 
 const DRY = process.argv.includes('--dry-run');
 const hoy = new Date().toISOString().slice(0, 10);
@@ -77,17 +78,22 @@ for (const [bancoId, filas] of porBanco) {
     resumen.bancos_frenados.push(`${nombre}: leyó ${filas.length} vs ${enBase.length} en base`);
   }
 
+  // Se indexa por la clave completa y por la clave sin sufijo de local, porque
+  // varios bancos publican "COMERCIO-SHOPPING X" y la base guarda solo "Comercio".
+  // NUNCA se usa f.clave: esa la genera Postgres con otra regla y no empareja.
   const porClave = new Map();
   for (const f of filas) {
-    const k = claveComercio(f.comercio); // NUNCA f.clave: la genera Postgres con otra regla
-    if (!porClave.has(k)) porClave.set(k, f);
+    for (const k of [claveComercio(f.comercio), claveBase(f.comercio)]) {
+      if (k && !porClave.has(k)) porClave.set(k, f);
+    }
   }
+  const buscar = (comercio) =>
+    porClave.get(claveComercio(comercio)) ?? porClave.get(claveBase(comercio));
 
   // freno 2: si el emparejamiento por nombre falla en masa, no son bajas reales,
   // es que cambió el formato del sitio (o la normalización de nombres).
   if (puedeDarDeBaja && enBase.length >= 20) {
-    const clavesFuente = new Set([...porClave.keys()]);
-    const emparejables = enBase.filter((b) => clavesFuente.has(claveComercio(b.comercio))).length;
+    const emparejables = enBase.filter((b) => buscar(b.comercio)).length;
     if (emparejables / enBase.length < UMBRAL_EMPAREJADOS) {
       puedeDarDeBaja = false;
       resumen.bancos_frenados.push(
@@ -101,12 +107,22 @@ for (const [bancoId, filas] of porBanco) {
   for (const b of enBase) {
     if (yaDeBaja.has(b.id)) continue;
     const k = claveComercio(b.comercio);
-    const f = porClave.get(k);
+    const f = buscar(b.comercio);
 
     if (!f) {
-      // desapareció del catálogo
+      // "Desapareció del catálogo" es la única conclusión que depende de emparejar
+      // nombres, y el emparejamiento por nombre es frágil (un banco cambia el rótulo
+      // y parece que cerró el comercio). Va a la cola, no se aplica solo.
       if (puedeDarDeBaja) {
-        bajas.push({ id: b.id, motivo: `desaparecio_del_catalogo_${nombre}_${hoy}`, fila: b });
+        cola.push({
+          fecha: hoy, banco_id: bancoId, banco_nombre: nombre,
+          tipo_cambio: 'baja', comercio: b.comercio, beneficio_id: b.id,
+          porcentaje_anterior: b.porcentaje,
+          descripcion_anterior: `${b.porcentaje ?? '?'}% · ${b.tipo_beneficio ?? ''}`.trim(),
+          descripcion_nuevo: 'ya no figura en el catálogo del banco',
+          estado: 'pendiente',
+          notas: `No apareció en la lectura del ${hoy}. Verificar antes de dar de baja.`,
+        });
         resumen.desaparecidos++;
       }
       continue;
@@ -196,12 +212,11 @@ log(`  Leídos por el scraper : ${staging.length}`);
 log(`  Activos en la base    : ${beneficios.length}\n`);
 log(`  AUTO-APLICA`);
 log(`    vencidos dados de baja   : ${resumen.vencidos}`);
-log(`    desaparecidos del banco  : ${resumen.desaparecidos}`);
 log(`    vigencia extendida       : ${resumen.vigencia_extendida}`);
 log(`    links completados        : ${resumen.links_completados}`);
 log(`    sellados verificado_en   : ${resumen.verificados}`);
 log(`\n  A LA COLA (necesitan tu OK): ${resumen.encolados}`);
-for (const t of ['porcentaje', 'dias', 'tipo_beneficio', 'alta']) {
+for (const t of ['baja', 'porcentaje', 'dias', 'tipo_beneficio', 'alta']) {
   const n = cola.filter((c) => c.tipo_cambio === t).length;
   if (n) log(`    ${t.padEnd(16)} ${n}`);
 }

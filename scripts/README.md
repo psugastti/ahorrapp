@@ -65,3 +65,16 @@ Itaú sigue a mano: sus páginas de detalle requieren navegador con sesión.
 
 `.github/workflows/scraper.yml` corre los lunes 08:00 (Paraguay) y también a mano
 desde la pestaña Actions con "Run workflow".
+
+## Por qué las bajas por "desapareció del catálogo" NO se aplican solas
+
+Es la única decisión que depende de emparejar nombres de comercio entre la fuente
+y la base, y ese emparejamiento es frágil. Familiar, por ejemplo, publica
+`ACADEMY-SHOPPING MARISCAL` mientras la base guarda `Academy`: sin cuidado, el
+comercio parece cerrado cuando solo cambió el rótulo.
+
+`claveBase()` recorta el sufijo de local para recuperar esos casos, pero siempre
+va a haber rótulos que no emparejan. Por eso la baja va a la cola con el motivo
+"ya no figura en el catálogo del banco" y la aprobás vos.
+
+El vencimiento por fecha sí se aplica solo: no depende de nombres, solo de `vence`.
