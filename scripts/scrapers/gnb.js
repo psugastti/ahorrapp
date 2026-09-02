@@ -24,10 +24,23 @@ const sinHtml = (s) =>
   );
 
 export async function run() {
+  // Akamai filtra por headers, no solo por IP: con el UA pelado devuelve 403 desde
+  // los runners de GitHub, y con el juego completo de headers de Chrome devuelve 200.
   const j = await get(API, {
     as: 'json',
     timeout: 60000,
-    headers: { Accept: 'application/json, text/plain, */*', Referer: SITIO },
+    headers: {
+      Accept: 'application/json, text/plain, */*',
+      'Accept-Language': 'es-PY,es;q=0.9,en;q=0.8',
+      Referer: SITIO,
+      Origin: 'https://www.beneficiosbancognb.com.py',
+      'sec-ch-ua': '"Chromium";v="131", "Not_A Brand";v="24"',
+      'sec-ch-ua-mobile': '?0',
+      'sec-ch-ua-platform': '"macOS"',
+      'Sec-Fetch-Dest': 'empty',
+      'Sec-Fetch-Mode': 'cors',
+      'Sec-Fetch-Site': 'same-origin',
+    },
   });
   const filas = j.data ?? (Array.isArray(j) ? j : []);
 

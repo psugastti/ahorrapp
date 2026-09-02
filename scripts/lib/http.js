@@ -8,12 +8,14 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Algunos servidores paraguayos mandan headers que undici rechaza por estrictos
 // ("Unexpected whitespace after header value"). curl los tolera, así que sirve de red.
-async function viaCurl(url, timeout) {
-  const { stdout } = await execFileP(
-    'curl',
-    ['-sSL', '--compressed', '-m', String(Math.ceil(timeout / 1000)), '-A', UA, url],
-    { maxBuffer: 64 * 1024 * 1024, encoding: 'buffer' }
-  );
+async function viaCurl(url, timeout, headers = {}) {
+  const args = ['-sSL', '--compressed', '-m', String(Math.ceil(timeout / 1000)), '-A', UA];
+  for (const [k, v] of Object.entries(headers)) args.push('-H', `${k}: ${v}`);
+  args.push(url);
+  const { stdout } = await execFileP('curl', args, {
+    maxBuffer: 64 * 1024 * 1024,
+    encoding: 'buffer',
+  });
   return stdout;
 }
 
@@ -42,7 +44,7 @@ export async function get(url, { tries = 3, timeout = 30000, headers = {}, as = 
   }
   // Último intento: curl
   try {
-    const buf = await viaCurl(url, timeout);
+    const buf = await viaCurl(url, timeout, headers);
     if (buf.length) {
       if (as === 'buffer') return buf;
       const txt = buf.toString('utf8');
