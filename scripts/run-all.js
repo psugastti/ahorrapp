@@ -107,10 +107,22 @@ for (const r of resultados) {
 
 // staging se reemplaza en cada corrida: es una foto del catálogo de hoy
 await db.from('staging_scrape').delete().neq('id', 0);
+let rechazadas = 0;
 for (let i = 0; i < aInsertar.length; i += 500) {
-  const { error } = await db.from('staging_scrape').insert(aInsertar.slice(i, i + 500));
-  if (error) { console.error('Error insertando staging:', error.message); process.exit(1); }
+  const lote = aInsertar.slice(i, i + 500);
+  const { error } = await db.from('staging_scrape').insert(lote);
+  if (!error) continue;
+  // Una fila mala (ej. una fecha inexistente en un PDF) no puede tirar la corrida
+  // entera: se reintenta de a una y se reportan las que Postgres rechaza.
+  for (const fila of lote) {
+    const r = await db.from('staging_scrape').insert(fila);
+    if (r.error) {
+      rechazadas++;
+      console.error(`  RECHAZADA ${fila.banco} / ${fila.comercio}: ${r.error.message}`);
+    }
+  }
 }
+if (rechazadas) log(`\n  ${rechazadas} filas rechazadas por la base (ver arriba).`);
 
 // bitácora
 await db.from('scraping_runs').insert(
@@ -122,5 +134,5 @@ await db.from('scraping_runs').insert(
   }))
 );
 
-log(`\n  ${aInsertar.length} filas guardadas en staging_scrape.`);
+log(`\n  ${aInsertar.length - rechazadas} filas guardadas en staging_scrape.`);
 log(`  Siguiente paso:  node apply-diff.js\n`);

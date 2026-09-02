@@ -67,22 +67,25 @@ export function parsePorcentajeMax(txt) {
   return todos.length ? todos[todos.length - 1] : null;
 }
 
+/** Arma YYYY-MM-DD solo si la fecha existe de verdad (un PDF decía "31/06/2027"). */
+function fechaValida(y, mes, dia) {
+  const d = new Date(Date.UTC(y, mes - 1, dia));
+  if (d.getUTCFullYear() !== y || d.getUTCMonth() !== mes - 1 || d.getUTCDate() !== dia) return null;
+  return `${y}-${String(mes).padStart(2, '0')}-${String(dia).padStart(2, '0')}`;
+}
+
 /** "Vigente hasta el 11 de noviembre de 2026" | "31/12/2026" -> "2026-11-11" */
 export function parseVence(txt) {
   const t = limpiar(txt).toLowerCase();
   if (!t) return null;
   let m = t.match(/(\d{1,2})\s+de\s+([a-záéíóú]+)\s+(?:de[l]?\s+)?(\d{4})/);
   if (m && MESES[m[2]]) {
-    return `${m[3]}-${String(MESES[m[2]]).padStart(2, '0')}-${String(m[1]).padStart(2, '0')}`;
+    return fechaValida(parseInt(m[3], 10), MESES[m[2]], parseInt(m[1], 10));
   }
   m = t.match(/(\d{1,2})[/\-.](\d{1,2})[/\-.](\d{2,4})/);
   if (m) {
-    const y = m[3].length === 2 ? `20${m[3]}` : m[3];
-    const mes = parseInt(m[2], 10);
-    const dia = parseInt(m[1], 10);
-    if (mes >= 1 && mes <= 12 && dia >= 1 && dia <= 31) {
-      return `${y}-${String(mes).padStart(2, '0')}-${String(dia).padStart(2, '0')}`;
-    }
+    const y = parseInt(m[3].length === 2 ? `20${m[3]}` : m[3], 10);
+    return fechaValida(y, parseInt(m[2], 10), parseInt(m[1], 10));
   }
   return null;
 }
