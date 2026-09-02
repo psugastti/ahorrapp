@@ -41,7 +41,7 @@ el sitio cambió de formato y no se da de baja nada de ese banco. Queda en el re
 | Banco | Cómo se lee | Aprox. |
 |---|---|---:|
 | Continental | API JSON (`/api/comercios?_limit=-1`) | 731 |
-| Interfisa | HTML `.cards-con-modal-item` | 365 |
+| Interfisa | **PDF de bases por comercio**: una fila por tramo de tarjeta, con `nivel_min`, tope, días y vigencia | 559 |
 | Familiar | Webflow paginado, sigue "Siguiente" | 316 |
 | BASA | HTML, **solo presencia** (el % está en PDF-imagen) | 216 |
 | FPJ | datos en el `alt` de las imágenes | 90 |
@@ -82,3 +82,18 @@ va a haber rótulos que no emparejan. Por eso la baja va a la cola con el motivo
 "ya no figura en el catálogo del banco" y la aprobás vos.
 
 El vencimiento por fecha sí se aplica solo: no depende de nombres, solo de `vence`.
+
+## Tramos de tarjeta (segmentación)
+
+Varios bancos dan un % distinto según la tarjeta: Interfisa publica "20% o 25%",
+y sus bases dicen "20% con Classic, Gold · 25% con Visa Platinum, Infinite y MC Black".
+
+El scraper de Interfisa lee el PDF de bases de cada comercio y emite **una fila por
+tramo**, con `nivel_min` según el modelo de la base (1 Clásica · 2 Oro · 3 Platinum ·
+4 Black/Signature · 5 Infinite; `null` = cualquier tarjeta). El mapeo vive en
+`lib/afinidades.js`.
+
+Cuando un scraper distingue tramos, el diff empareja por `comercio + nivel_min`. Así la
+fila "Cole Haan · Platinum+" que la base no tiene entra como **alta** con su `payload`
+completo, y la fila "Cole Haan · cualquier tarjeta" empareja con la que ya existe y le
+completa tope, días y vigencia.

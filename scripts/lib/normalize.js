@@ -90,25 +90,29 @@ export function parseVence(txt) {
 /** Días mencionados textualmente. "todos los días" -> [] con todosLosDias=true */
 export function parseDias(txt) {
   const t = limpiar(txt).toLowerCase();
-  if (/todos\s+los\s+d[ií]as/.test(t)) return { dias: [], todosLosDias: true };
+  if (/todos\s+los\s+d[ií]as|todo\s+el\s+a[ñn]o/.test(t)) return { dias: [], todosLosDias: true };
+  const ORDEN = ['lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado', 'domingo'];
+  const DIA = '(lunes|martes|mi[eé]rcoles|jueves|viernes|s[aá]bados?|domingos?)';
+  const norm = (d) => DIAS[d.replace(/s$/, '')] ?? DIAS[d];
   const found = new Set();
-  for (const [k, v] of Object.entries(DIAS)) {
-    if (new RegExp(`\\b${k}\\b`, 'i').test(t)) found.add(v);
-  }
-  // "de lunes a viernes" -> rango
-  const rango = t.match(/de\s+(lunes|martes|mi[eé]rcoles|jueves|viernes|s[aá]bado|domingo)\s+a\s+(lunes|martes|mi[eé]rcoles|jueves|viernes|s[aá]bado|domingo)/);
-  if (rango) {
-    const orden = ['lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado', 'domingo'];
-    const a = orden.indexOf(DIAS[rango[1]]);
-    const b = orden.indexOf(DIAS[rango[2]]);
+
+  // rangos: "de lunes a viernes", "viernes a domingo", "lunes a jueves"
+  for (const m of t.matchAll(new RegExp(`${DIA}\\s+a(?:l)?\\s+${DIA}`, 'g'))) {
+    const a = ORDEN.indexOf(norm(m[1]));
+    const b = ORDEN.indexOf(norm(m[2]));
     if (a >= 0 && b >= 0) {
       for (let i = a; ; i = (i + 1) % 7) {
-        found.add(orden[i]);
+        found.add(ORDEN[i]);
         if (i === b) break;
       }
     }
   }
-  return { dias: [...found], todosLosDias: false };
+  // sueltos y plurales: "miércoles y sábados", "los jueves"
+  for (const m of t.matchAll(new RegExp(`\\b${DIA}\\b`, 'g'))) {
+    const d = norm(m[1]);
+    if (d) found.add(d);
+  }
+  return { dias: ORDEN.filter((d) => found.has(d)), todosLosDias: false };
 }
 
 /**

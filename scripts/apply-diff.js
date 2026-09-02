@@ -34,7 +34,7 @@ const UMBRAL_EMPAREJADOS = 0.8; // cuántos de la base encuentro por nombre
 
 const log = (...a) => console.log(...a);
 const resumen = {
-  vencidos: 0, desaparecidos: 0, vigencia_extendida: 0,
+  vencidos: 0, desaparecidos: 0, vigencia_corregida: 0, topes_completados: 0, dias_completados: 0,
   links_completados: 0, verificados: 0, encolados: 0, bancos_frenados: [],
 };
 
@@ -42,7 +42,7 @@ const resumen = {
 const staging = await selectAll('staging_scrape', '*');
 const beneficios = await selectAll(
   'beneficios',
-  'id,comercio,banco_id,porcentaje,tipo_beneficio,dias,todos_los_dias,vence,activo,link_oficial,url_bases,verificado_en,observacion',
+  'id,comercio,banco_id,porcentaje,tipo_beneficio,dias,todos_los_dias,vence,activo,link_oficial,url_bases,verificado_en,observacion,nivel_min,tope_monto,tope_periodo',
   (q) => q.eq('activo', true)
 );
 const bancos = await selectAll('bancos', 'id,nombre');
@@ -90,19 +90,27 @@ for (const [bancoId, filas] of porBanco) {
   // Se indexa por la clave completa y por la clave sin sufijo de local, porque
   // varios bancos publican "COMERCIO-SHOPPING X" y la base guarda solo "Comercio".
   // NUNCA se usa f.clave: esa la genera Postgres con otra regla y no empareja.
+  // Si el scraper de este banco distingue tramos de tarjeta (Interfisa emite una
+  // fila por afinidad con nivel_min), la clave incluye el tramo: así la fila
+  // "Cole Haan · Platinum+" no pisa a "Cole Haan · cualquier tarjeta".
+  const conTramos = filas.some((f) => f.payload?.nivel_min != null);
+  const nivelDe = (x) => (conTramos ? `|n${x?.nivel_min ?? ''}` : '');
   const porClave = new Map();
   for (const f of filas) {
-    for (const k of [claveComercio(f.comercio), claveBase(f.comercio)]) {
+    const suf = nivelDe(f.payload);
+    for (const k of [claveComercio(f.comercio) + suf, claveBase(f.comercio) + suf]) {
       if (k && !porClave.has(k)) porClave.set(k, f);
     }
   }
-  const buscar = (comercio) =>
-    porClave.get(claveComercio(comercio)) ?? porClave.get(claveBase(comercio));
+  const buscar = (b) => {
+    const suf = nivelDe(b);
+    return porClave.get(claveComercio(b.comercio) + suf) ?? porClave.get(claveBase(b.comercio) + suf);
+  };
 
   // freno 2: si el emparejamiento por nombre falla en masa, no son bajas reales,
   // es que cambió el formato del sitio (o la normalización de nombres).
   if (puedeDarDeBaja && enBase.length >= 20) {
-    const emparejables = enBase.filter((b) => buscar(b.comercio)).length;
+    const emparejables = enBase.filter((b) => buscar(b)).length;
     if (emparejables / enBase.length < UMBRAL_EMPAREJADOS) {
       puedeDarDeBaja = false;
       resumen.bancos_frenados.push(
@@ -116,7 +124,7 @@ for (const [bancoId, filas] of porBanco) {
 
   for (const b of enBase) {
     if (yaDeBaja.has(b.id)) continue;
-    const f = buscar(b.comercio);
+    const f = buscar(b);
 
     if (!f) {
       // "Desapareció del catálogo" es la única conclusión que depende de emparejar
@@ -141,10 +149,22 @@ for (const [bancoId, filas] of porBanco) {
     const campos = {};
     let coincide = true;
 
-    // vigencia: extender es seguro (el dato es textual de la fuente)
+    // vigencia: la fecha textual de la fuente manda, se acorte o se extienda
     if (f.vence && f.vence >= hoy && f.vence !== b.vence) {
       campos.vence = f.vence;
-      resumen.vigencia_extendida++;
+      resumen.vigencia_corregida++;
+    }
+    // completar huecos con datos textuales de la fuente (nunca pisar lo cargado)
+    const p = f.payload ?? {};
+    if (b.tope_monto == null && p.tope_monto != null) {
+      campos.tope_monto = p.tope_monto;
+      if (p.tope_periodo) campos.tope_periodo = p.tope_periodo;
+      resumen.topes_completados++;
+    }
+    if (!(b.dias || []).length && !b.todos_los_dias && ((p.dias || []).length || p.todos_los_dias)) {
+      campos.dias = p.dias || [];
+      campos.todos_los_dias = !!p.todos_los_dias;
+      resumen.dias_completados++;
     }
     // completar huecos, nunca pisar lo que ya hay
     if (!b.link_oficial && f.link_oficial) { campos.link_oficial = f.link_oficial; resumen.links_completados++; }
@@ -208,16 +228,19 @@ for (const [bancoId, filas] of porBanco) {
     for (const f of filas) {
       if (emparejadas.has(f)) continue;
       // una fila por comercio: la fuente puede repetir el mismo local
-      const kf = claveComercio(f.comercio);
+      const kf = claveComercio(f.comercio) + nivelDe(f.payload);
       if (yaVisto.has(kf)) continue;
       yaVisto.add(kf);
       cola.push({
         fecha: hoy, banco_id: bancoId, banco_nombre: nombre,
         tipo_cambio: 'alta', comercio: f.comercio, beneficio_id: null,
         porcentaje_nuevo: f.porcentaje,
+        payload: f.payload ?? null,
         descripcion_nuevo: [
           f.porcentaje != null ? `${f.porcentaje}%` : null,
           f.tipo_beneficio,
+          f.payload?.nivel_min ? `nivel ${f.payload.nivel_min}+` : null,
+          f.payload?.tope_monto ? `tope ${f.payload.tope_monto.toLocaleString('es-PY')}` : null,
           f.todos_los_dias ? 'todos los días' : (f.dias || []).join('/'),
           f.vence ? `vence ${f.vence}` : null,
         ].filter(Boolean).join(' · '),
@@ -235,7 +258,9 @@ log(`  Leídos por el scraper : ${staging.length}`);
 log(`  Activos en la base    : ${beneficios.length}\n`);
 log(`  AUTO-APLICA`);
 log(`    vencidos dados de baja   : ${resumen.vencidos}`);
-log(`    vigencia extendida       : ${resumen.vigencia_extendida}`);
+log(`    vigencia corregida       : ${resumen.vigencia_corregida}`);
+log(`    topes completados        : ${resumen.topes_completados}`);
+log(`    días completados         : ${resumen.dias_completados}`);
 log(`    links completados        : ${resumen.links_completados}`);
 log(`    sellados verificado_en   : ${resumen.verificados}`);
 log(`\n  A LA COLA (necesitan tu OK): ${resumen.encolados}`);
