@@ -102,11 +102,10 @@ for (const [bancoId, filas] of porBanco) {
     }
   }
 
-  const emparejados = new Set();
+  const emparejadas = new Set(); // filas de la fuente que ya matchearon con la base
 
   for (const b of enBase) {
     if (yaDeBaja.has(b.id)) continue;
-    const k = claveComercio(b.comercio);
     const f = buscar(b.comercio);
 
     if (!f) {
@@ -127,7 +126,7 @@ for (const [bancoId, filas] of porBanco) {
       }
       continue;
     }
-    emparejados.add(k);
+    emparejadas.add(f);
 
     const campos = {};
     let coincide = true;
@@ -186,8 +185,13 @@ for (const [bancoId, filas] of porBanco) {
 
   // ---------- 6. altas: la fuente lo publica y la base no lo tiene ----------
   if (!soloPresencia) {
-    for (const [k, f] of porClave) {
-      if (emparejados.has(k)) continue;
+    const yaVisto = new Set();
+    for (const f of filas) {
+      if (emparejadas.has(f)) continue;
+      // una fila por comercio: la fuente puede repetir el mismo local
+      const kf = claveComercio(f.comercio);
+      if (yaVisto.has(kf)) continue;
+      yaVisto.add(kf);
       cola.push({
         fecha: hoy, banco_id: bancoId, banco_nombre: nombre,
         tipo_cambio: 'alta', comercio: f.comercio, beneficio_id: null,
