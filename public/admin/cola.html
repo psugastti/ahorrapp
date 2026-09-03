@@ -183,7 +183,7 @@ function render(){
                    f.link_bases ? `<a href="${esc(f.link_bases)}" target="_blank" rel="noopener">bases ↗</a>` : null].filter(Boolean).join(' · ');
     const nota = f.notas ? esc(f.notas.replace(/^\[scraper\]\s*/,'').replace(/Fuente:.*$/,'')) : '';
     const catSel = esAlta ? `<select data-cat="${f.id}">${categorias.map(c=>`<option value="${c.id}" ${c.id===adivinarCategoria(f)?'selected':''}>${c.emoji} ${esc(c.nombre)}</option>`).join('')}</select>` : '';
-    const estadoTxt = f._estado==='pendiente' ? '' : `<span class="chip">${f._estado}</span>`;
+    const estadoTxt = f._estado==='pendiente' ? (f._error ? `<span class="chip baja">error: ${esc(f._error)}</span>` : '') : `<span class="chip">${f._estado}</span>`;
 
     return `<div class="card ${f._estado!=='pendiente'?'done':''}" id="c${f.id}">
       <div>
@@ -202,26 +202,40 @@ function render(){
 }
 
 // ---------- acciones ----------
-async function aprobar(id){
-  const f = filas.find(x=>x.id===id); if (!f || f._estado!=='pendiente') return;
+async function aprobar(id, { redibujar = true } = {}){
+  const f = filas.find(x=>x.id===id); if (!f || f._estado!=='pendiente') return false;
+  // Si la tarjeta está dibujada se respeta lo que eligió Pablo; si no (más allá de las
+  // 400 que se muestran), se usa la misma adivinanza que se le habría mostrado.
   const sel = document.querySelector(`[data-cat="${id}"]`);
-  const { error } = await sb.rpc('aprobar_cambio', { p_id:id, p_categoria_id: sel ? +sel.value : null });
-  if (error) { toast('Error: '+error.message); return false; }
-  f._estado='aplicado'; render(); return true;
+  const cat = f.tipo_cambio === 'alta' ? (sel ? +sel.value : adivinarCategoria(f)) : null;
+  const { error } = await sb.rpc('aprobar_cambio', { p_id:id, p_categoria_id: cat });
+  if (error) { f._error = error.message; if (redibujar) toast('Error: '+error.message); return false; }
+  f._estado='aplicado'; if (redibujar) render(); return true;
 }
-async function rechazar(id){
-  const f = filas.find(x=>x.id===id); if (!f || f._estado!=='pendiente') return;
+async function rechazar(id, { redibujar = true } = {}){
+  const f = filas.find(x=>x.id===id); if (!f || f._estado!=='pendiente') return false;
   const { error } = await sb.rpc('rechazar_cambio', { p_id:id });
-  if (error) { toast('Error: '+error.message); return false; }
-  f._estado='rechazado'; render(); return true;
+  if (error) { f._error = error.message; if (redibujar) toast('Error: '+error.message); return false; }
+  f._estado='rechazado'; if (redibujar) render(); return true;
 }
+let loteEnCurso = false;
 async function enLote(fn, verbo){
+  if (loteEnCurso) return;
   const ids = visibles().filter(f=>f._estado==='pendiente').map(f=>f.id);
   if (!ids.length) return;
-  if (!confirm(`¿${verbo} ${ids.length} cambios?`)) return;
-  let ok=0; for (const id of ids) { if (await fn(id)) ok++; }
-  toast(`${ok} de ${ids.length} ${verbo.toLowerCase()}s`);
+  if (!confirm(`¿${verbo} ${ids.length} cambios? Tarda ~1 segundo cada 5. No cierres la página.`)) return;
+  loteEnCurso = true;
+  const botones = [$('#aprobarTodos'), $('#rechazarTodos')]; botones.forEach(b=>b.disabled=true);
+  let ok=0, fallas=0;
+  for (let i=0;i<ids.length;i++) {
+    if (await fn(ids[i], { redibujar:false })) ok++; else fallas++;
+    if (i % 5 === 0) { $('#nVisibles').textContent = `${verbo}… ${i+1} de ${ids.length}`; }
+  }
+  loteEnCurso = false; botones.forEach(b=>b.disabled=false);
+  render();
+  toast(`${ok} aplicados${fallas ? `, ${fallas} con error (mostrá resueltos para verlos)` : ''}`);
 }
+window.addEventListener('beforeunload', (e) => { if (loteEnCurso) { e.preventDefault(); e.returnValue=''; } });
 $('#aprobarTodos').onclick = () => enLote(aprobar, 'Aplicar');
 $('#rechazarTodos').onclick = () => enLote(rechazar, 'Rechazar');
 $('#fBanco').onchange = $('#fTexto').oninput = $('#fHechos').onchange = render;
