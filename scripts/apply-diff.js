@@ -39,7 +39,7 @@ const UMBRAL_EMPAREJADOS = 0.8; // cuántos de la base encuentro por nombre
 const log = (...a) => console.log(...a);
 const resumen = {
   vencidos: 0, desaparecidos: 0, vigencia_corregida: 0, topes_completados: 0, dias_completados: 0, niveles_completados: 0, tipo_corregido: 0,
-  links_completados: 0, verificados: 0, encolados: 0, no_comercio: 0, bancos_frenados: [],
+  links_completados: 0, verificados: 0, encolados: 0, no_comercio: 0, altas_vencidas: 0, bancos_frenados: [],
 };
 
 // ---------- datos ----------
@@ -271,7 +271,10 @@ for (const [bancoId, filas] of porBanco) {
         estado: 'aplicado_auto',
         notas: `[scraper] La fuente dice "reintegro" textualmente. Fuente: ${f.link_oficial || f.fuente}`,
       });
-    } else if (!soloPresencia && f.tipo_beneficio && b.tipo_beneficio && f.tipo_beneficio !== b.tipo_beneficio) {
+    } else if (!soloPresencia && f.tipo_beneficio && b.tipo_beneficio && f.tipo_beneficio !== b.tipo_beneficio &&
+               !(b.tipo_beneficio === 'reintegro' && /reintegro/i.test(textoFuente))) {
+      // (si la base dice reintegro y la fuente menciona "reintegro" en algún lado —GNB:
+      // "25% de descuento… vía reintegro en el extracto"— no es un cambio, es la misma cosa)
       coincide = false;
       cola.push({
         fecha: hoy, banco_id: bancoId, banco_nombre: nombre,
@@ -313,6 +316,8 @@ for (const [bancoId, filas] of porBanco) {
       yaVisto.add(kf);
       // avisos (ej. "salió el catálogo Ueno") no son altas: van como tarea de revisión
       const esAviso = !!f.payload?.revisar_a_mano;
+      // lo que la fuente publica ya vencido no se propone: mañana lo daría de baja igual
+      if (f.vence && f.vence < hoy) { resumen.altas_vencidas++; continue; }
       const yaRechazado = noComercio.has(`${bancoId}|${claveComercio(f.comercio)}`);
       if (yaRechazado) resumen.no_comercio++;
       cola.push({
@@ -349,6 +354,7 @@ log(`    topes completados        : ${resumen.topes_completados}`);
 log(`    días completados         : ${resumen.dias_completados}`);
 log(`    niveles completados      : ${resumen.niveles_completados}`);
 log(`    no-comercios descartados : ${resumen.no_comercio}`);
+log(`    altas ya vencidas        : ${resumen.altas_vencidas}`);
 log(`    descuento→reintegro      : ${resumen.tipo_corregido}  (la fuente lo dice textual)`);
 log(`    links completados        : ${resumen.links_completados}`);
 log(`    sellados verificado_en   : ${resumen.verificados}`);
