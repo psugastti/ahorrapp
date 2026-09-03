@@ -39,7 +39,7 @@ const UMBRAL_EMPAREJADOS = 0.8; // cuántos de la base encuentro por nombre
 const log = (...a) => console.log(...a);
 const resumen = {
   vencidos: 0, desaparecidos: 0, vigencia_corregida: 0, topes_completados: 0, dias_completados: 0, niveles_completados: 0, tipo_corregido: 0,
-  links_completados: 0, verificados: 0, encolados: 0, bancos_frenados: [],
+  links_completados: 0, verificados: 0, encolados: 0, no_comercio: 0, bancos_frenados: [],
 };
 
 // ---------- datos ----------
@@ -51,6 +51,19 @@ const beneficios = await selectAll(
 );
 const bancos = await selectAll('bancos', 'id,nombre');
 const nombrePorId = new Map(bancos.map((b) => [b.id, b.nombre]));
+
+// Filas que se dieron de baja a mano por NO ser comercios (campañas, "Adelanto de
+// efectivo", "Zona Norte", categorías…). Si el banco las vuelve a publicar, no son altas:
+// se registran como rechazadas para que no vuelvan a la cola cada semana.
+const noComercio = new Set();
+{
+  const bajas = await selectAll('auditoria_bajas', 'beneficio_id,motivo', (q) => q.ilike('motivo', 'no_es_comercio%'));
+  const ids = [...new Set(bajas.map((a) => a.beneficio_id))];
+  for (let i = 0; i < ids.length; i += 200) {
+    const lote = await selectAll('beneficios', 'id,banco_id,comercio', (q) => q.in('id', ids.slice(i, i + 200)).eq('activo', false));
+    for (const b of lote) noComercio.add(`${b.banco_id}|${claveComercio(b.comercio)}`);
+  }
+}
 
 if (!staging.length) {
   console.error('staging_scrape está vacío: corré primero  node run-all.js');
@@ -292,6 +305,8 @@ for (const [bancoId, filas] of porBanco) {
       yaVisto.add(kf);
       // avisos (ej. "salió el catálogo Ueno") no son altas: van como tarea de revisión
       const esAviso = !!f.payload?.revisar_a_mano;
+      const yaRechazado = noComercio.has(`${bancoId}|${claveComercio(f.comercio)}`);
+      if (yaRechazado) resumen.no_comercio++;
       cola.push({
         fecha: hoy, banco_id: bancoId, banco_nombre: nombre,
         tipo_cambio: esAviso ? 'verificar_condiciones' : 'alta', comercio: f.comercio, beneficio_id: null,
@@ -305,8 +320,10 @@ for (const [bancoId, filas] of porBanco) {
           f.todos_los_dias ? 'todos los días' : (f.dias || []).join('/'),
           f.vence ? `vence ${f.vence}` : null,
         ].filter(Boolean).join(' · '),
-        estado: 'pendiente',
-        notas: `[scraper] Comercio nuevo en el catálogo. Fuente: ${f.link_oficial || f.fuente}`,
+        estado: yaRechazado ? 'rechazado' : 'pendiente',
+        notas: yaRechazado
+          ? `[scraper] Ya se marcó a mano como "no es comercio"; no se vuelve a proponer. Fuente: ${f.link_oficial || f.fuente}`
+          : `[scraper] Comercio nuevo en el catálogo. Fuente: ${f.link_oficial || f.fuente}`,
       });
     }
   }
@@ -323,6 +340,7 @@ log(`    vigencia corregida       : ${resumen.vigencia_corregida}`);
 log(`    topes completados        : ${resumen.topes_completados}`);
 log(`    días completados         : ${resumen.dias_completados}`);
 log(`    niveles completados      : ${resumen.niveles_completados}`);
+log(`    no-comercios descartados : ${resumen.no_comercio}`);
 log(`    descuento→reintegro      : ${resumen.tipo_corregido}  (la fuente lo dice textual)`);
 log(`    links completados        : ${resumen.links_completados}`);
 log(`    sellados verificado_en   : ${resumen.verificados}`);
