@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ahorrapp · Cola de cambios</title>
+<meta name="robots" content="noindex">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<style>
+  :root{--bg:#F5F7FA;--card:#fff;--ink:#0E2A4E;--muted:#5B6B7F;--line:#E3E8EF;--ok:#1E8E5A;--no:#C0392B;--warn:#B7791F;--chip:#EEF2F7}
+  *{box-sizing:border-box}body{margin:0;font:15px/1.45 -apple-system,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--ink)}
+  header{position:sticky;top:0;z-index:5;background:var(--ink);color:#fff;padding:12px 16px;display:flex;gap:16px;align-items:center;flex-wrap:wrap}
+  header h1{font-size:17px;margin:0;flex:1}header small{opacity:.8}
+  .wrap{max-width:1000px;margin:0 auto;padding:16px}
+  .login{max-width:380px;margin:60px auto;background:var(--card);padding:24px;border-radius:12px;border:1px solid var(--line)}
+  input,select,button{font:inherit}input,select{width:100%;padding:10px;border:1px solid var(--line);border-radius:8px;margin:6px 0 12px}
+  button{padding:9px 14px;border-radius:8px;border:1px solid var(--line);background:#fff;cursor:pointer;color:var(--ink)}
+  button.ok{background:var(--ok);color:#fff;border-color:var(--ok)}button.no{background:#fff;color:var(--no);border-color:var(--no)}
+  button.primary{background:var(--ink);color:#fff;border-color:var(--ink)}button:disabled{opacity:.5;cursor:default}
+  .stats{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0}
+  .stat{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:8px 12px;cursor:pointer}
+  .stat.on{outline:2px solid var(--ink)}.stat b{font-size:18px;display:block}.stat span{color:var(--muted);font-size:12px}
+  .filters{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:8px 0 16px}.filters select,.filters input{width:auto;margin:0}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px;margin-bottom:10px;display:grid;grid-template-columns:1fr auto;gap:10px 16px}
+  .card.done{opacity:.45}
+  .top{display:flex;gap:8px;align-items:baseline;flex-wrap:wrap}.top h3{margin:0;font-size:16px}
+  .chip{background:var(--chip);border-radius:999px;padding:2px 9px;font-size:12px;color:var(--muted)}
+  .chip.alta{background:#E6F4EC;color:var(--ok)}.chip.baja{background:#FBEAE7;color:var(--no)}.chip.porcentaje{background:#FFF4DE;color:var(--warn)}
+  .diff{font-size:15px;margin:4px 0}.diff .old{color:var(--muted);text-decoration:line-through}.diff .arrow{margin:0 6px;color:var(--muted)}.diff .new{font-weight:600}
+  .meta{font-size:13px;color:var(--muted)}.meta a{color:var(--ink)}
+  .actions{display:flex;flex-direction:column;gap:6px;min-width:150px}.actions select{margin:0 0 4px;padding:6px}
+  .bulk{display:flex;gap:8px;margin:8px 0 16px;align-items:center;flex-wrap:wrap}.bulk .n{color:var(--muted)}
+  .toast{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);background:var(--ink);color:#fff;padding:10px 16px;border-radius:10px;display:none}
+  .empty{text-align:center;color:var(--muted);padding:40px}
+  @media(max-width:640px){.card{grid-template-columns:1fr}.actions{flex-direction:row}}
+</style>
+</head>
+<body>
+<header><h1>Cola de cambios</h1><small id="quien"></small><button id="salir" hidden>Salir</button></header>
+<div class="wrap">
+  <div id="login" class="login">
+    <h2 style="margin-top:0">Entrar</h2>
+    <p style="color:var(--muted);font-size:13px">Solo los emails admin pueden aprobar. La primera vez, creá la cuenta con tu email y una contraseña.</p>
+    <input id="email" type="email" placeholder="email" autocomplete="username">
+    <input id="pass" type="password" placeholder="contraseña" autocomplete="current-password">
+    <div style="display:flex;gap:8px"><button class="primary" id="btnLogin">Entrar</button><button id="btnSignup">Crear cuenta</button></div>
+    <p id="loginMsg" style="color:var(--no);font-size:13px"></p>
+  </div>
+
+  <div id="app" hidden>
+    <div class="stats" id="stats"></div>
+    <div class="filters">
+      <select id="fBanco"><option value="">Todos los bancos</option></select>
+      <input id="fTexto" placeholder="buscar comercio…">
+      <label style="font-size:13px;color:var(--muted)"><input type="checkbox" id="fHechos" style="width:auto;margin:0 4px 0 0">mostrar ya resueltos</label>
+    </div>
+    <div class="bulk">
+      <span class="n" id="nVisibles"></span>
+      <button class="ok" id="aprobarTodos">Aprobar todos los visibles</button>
+      <button class="no" id="rechazarTodos">Rechazar todos los visibles</button>
+    </div>
+    <div id="lista"></div>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+const SUPABASE_URL = 'https://itbwqrclualkitsjkyta.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_tLNBQGhetFr20qijvoLcBg_s8QZX1ty';
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+const $ = (s) => document.querySelector(s);
+const TIPOS = { alta:'Alta', baja:'Baja', porcentaje:'Porcentaje', dias:'Días', tipo_beneficio:'Tipo', verificar_condiciones:'Verificar', sospechoso:'Sospechoso', baja_por_vencimiento:'Vencido' };
+const DIAS_ES = { lunes:'Lun', martes:'Mar', miercoles:'Mié', jueves:'Jue', viernes:'Vie', sabado:'Sáb', domingo:'Dom' };
+const NIVEL = { 1:'Clásica+', 2:'Oro+', 3:'Platinum+', 4:'Black+', 5:'Infinite' };
+// Para adivinar la categoría de un alta cuando no hay otra fila del mismo comercio.
+const CAT_KEYWORDS = [
+  [/farmac|drogueria/i,4],[/super|hiper|almacen|despensa|mayorista/i,1],[/petro|shell|puma|combust|estacion|copetrol/i,2],
+  [/rest|bar|caf|pizz|burger|sushi|grill|parrill|heladeria|panader|confiter|gastro|comida|cocina|lounge|resto/i,3],
+  [/optic|lentes/i,14],[/gym|gimnas|fitness|club/i,13],[/hotel|viaje|turis|resort|aerol/i,11],[/univers|colegio|instituto|educa|academ|libreria/i,12],
+  [/cine|teatro|entret|juego|parque/i,10],[/mascot|veterin|pet/i,21],[/ferret|construc|pisos|sanitari/i,27],[/perfum|boticario|cosmet/i,25],
+  [/joyer|reloj/i,26],[/flor/i,24],[/auto|motor|repuest|neumat|lubric/i,18],[/calzad|zapat|shoes|crocs|nike|adidas|puma/i,19],
+  [/electro|tv|celular|cell|notebook|tecno/i,6],[/mueble|deco|hogar|colchon/i,8],[/spa|belleza|estetic|barber|peluq|salon|nail/i,15],
+  [/sanatorio|clinic|dental|medic|salud|lab|vital/i,9],[/deport|sport/i,28],[/shopping|mall/i,16],[/agro|veterin|semilla/i,22],
+  [/boutique|moda|indument|jeans|ropa|tienda|store|outfit|kids|baby/i,5],
+];
+
+let usuario = null, filas = [], bancos = [], categorias = [], filtroTipo = '';
+
+function toast(m){ const t=$('#toast'); t.textContent=m; t.style.display='block'; clearTimeout(t._t); t._t=setTimeout(()=>t.style.display='none',2200); }
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+// ---------- auth ----------
+async function init(){
+  const { data:{ session } } = await sb.auth.getSession();
+  if (session) entrar(session.user); 
+  sb.auth.onAuthStateChange((_e, s) => { if (s?.user && !usuario) entrar(s.user); });
+}
+$('#btnLogin').onclick = async () => {
+  const { error } = await sb.auth.signInWithPassword({ email:$('#email').value.trim(), password:$('#pass').value });
+  $('#loginMsg').textContent = error ? error.message : '';
+};
+$('#btnSignup').onclick = async () => {
+  const { data, error } = await sb.auth.signUp({ email:$('#email').value.trim(), password:$('#pass').value });
+  $('#loginMsg').textContent = error ? error.message : (data.session ? '' : 'Cuenta creada. Si Supabase pide confirmar el email, revisá tu casilla y volvé a entrar.');
+};
+$('#salir').onclick = async () => { await sb.auth.signOut(); location.reload(); };
+
+async function entrar(u){
+  usuario = u; $('#quien').textContent = u.email; $('#salir').hidden = false;
+  const { data: admin } = await sb.rpc('es_admin');
+  if (!admin) { $('#loginMsg').textContent = `${u.email} no es admin.`; $('#salir').hidden=false; return; }
+  $('#login').hidden = true; $('#app').hidden = false;
+  [{ data: bancos }, { data: categorias }] = await Promise.all([
+    sb.from('bancos').select('id,nombre').order('nombre'),
+    sb.from('categorias').select('id,nombre,emoji').eq('is_active', true).order('nombre'),
+  ]);
+  $('#fBanco').innerHTML += bancos.map(b=>`<option>${esc(b.nombre)}</option>`).join('');
+  await cargar();
+}
+
+// ---------- datos ----------
+async function cargar(){
+  const { data, error } = await sb.from('cola_pendiente').select('*').order('banco_nombre').order('tipo_cambio').order('comercio').limit(5000);
+  if (error) { toast(error.message); return; }
+  filas = data.map(f => ({ ...f, _estado:'pendiente' }));
+  render();
+}
+
+function visibles(){
+  const banco = $('#fBanco').value, txt = $('#fTexto').value.trim().toLowerCase(), hechos = $('#fHechos').checked;
+  return filas.filter(f =>
+    (!filtroTipo || f.tipo_cambio === filtroTipo) &&
+    (!banco || f.banco_nombre === banco) &&
+    (!txt || f.comercio.toLowerCase().includes(txt)) &&
+    (hechos || f._estado === 'pendiente'));
+}
+
+function adivinarCategoria(f){
+  if (f.base_categoria) return f.base_categoria;
+  const mismo = filas.find(o => o !== f && o.banco_id === f.banco_id && o.comercio.toLowerCase() === f.comercio.toLowerCase() && o.base_categoria);
+  if (mismo) return mismo.base_categoria;
+  const texto = `${f.comercio} ${f.payload?.rubro ?? ''} ${f.payload?.observacion ?? ''}`;
+  for (const [re, id] of CAT_KEYWORDS) if (re.test(texto)) return id;
+  return 17; // Varios
+}
+
+function fmtDias(d, todos){ if (todos) return 'todos los días'; return (d||[]).map(x=>DIAS_ES[x]||x).join(' · ') || null; }
+function fmtGs(n){ return n ? 'Gs ' + Number(n).toLocaleString('es-PY') : null; }
+
+function render(){
+  const pend = filas.filter(f=>f._estado==='pendiente');
+  const porTipo = {}; for (const f of pend) porTipo[f.tipo_cambio]=(porTipo[f.tipo_cambio]||0)+1;
+  $('#stats').innerHTML = [`<div class="stat ${!filtroTipo?'on':''}" data-t=""><b>${pend.length}</b><span>pendientes</span></div>`]
+    .concat(Object.entries(porTipo).sort((a,b)=>b[1]-a[1]).map(([t,n])=>`<div class="stat ${filtroTipo===t?'on':''}" data-t="${t}"><b>${n}</b><span>${TIPOS[t]||t}</span></div>`)).join('');
+  document.querySelectorAll('.stat').forEach(el=>el.onclick=()=>{filtroTipo=el.dataset.t;render();});
+
+  const vis = visibles();
+  $('#nVisibles').textContent = `${vis.filter(f=>f._estado==='pendiente').length} visibles`;
+  if (!vis.length) { $('#lista').innerHTML = '<div class="empty">Nada por acá. 🎉</div>'; return; }
+
+  $('#lista').innerHTML = vis.slice(0,400).map(f => {
+    const p = f.payload || {};
+    const esAlta = f.tipo_cambio === 'alta';
+    let diff = '';
+    if (f.tipo_cambio === 'porcentaje') diff = `<div class="diff"><span class="old">${f.porcentaje_anterior}%</span><span class="arrow">→</span><span class="new">${f.porcentaje_nuevo}%</span></div>`;
+    else if (f.tipo_cambio === 'tipo_beneficio' || f.tipo_cambio === 'dias') diff = `<div class="diff"><span class="old">${esc(f.descripcion_anterior)}</span><span class="arrow">→</span><span class="new">${esc(f.descripcion_nuevo)}</span></div>`;
+    else if (f.tipo_cambio === 'baja') diff = `<div class="diff"><span class="old">${esc(f.descripcion_anterior)}</span><span class="arrow">→</span><span class="new" style="color:var(--no)">dar de baja</span></div>`;
+    else if (esAlta) {
+      const partes = [
+        p.porcentaje != null ? `<b>${p.porcentaje}%</b>` : null, p.tipo_beneficio,
+        p.nivel_min ? `<span class="chip">${NIVEL[p.nivel_min]||('nivel '+p.nivel_min)}</span>` : null,
+        fmtDias(p.dias, p.todos_los_dias), p.tope_monto ? `tope ${fmtGs(p.tope_monto)}${p.tope_periodo?' '+p.tope_periodo:''}` : null,
+        p.vence ? `vence ${p.vence}` : null,
+      ].filter(Boolean).join(' · ');
+      diff = `<div class="diff">${partes || esc(f.descripcion_nuevo)}</div>`;
+    } else diff = `<div class="diff">${esc(f.descripcion_nuevo||'')}</div>`;
+
+    const obs = p.observacion ? `<div class="meta">${esc(String(p.observacion).slice(0,180))}</div>` : '';
+    const links = [f.link_fuente ? `<a href="${esc(f.link_fuente)}" target="_blank" rel="noopener">fuente ↗</a>` : null,
+                   f.link_bases ? `<a href="${esc(f.link_bases)}" target="_blank" rel="noopener">bases ↗</a>` : null].filter(Boolean).join(' · ');
+    const nota = f.notas ? esc(f.notas.replace(/^\[scraper\]\s*/,'').replace(/Fuente:.*$/,'')) : '';
+    const catSel = esAlta ? `<select data-cat="${f.id}">${categorias.map(c=>`<option value="${c.id}" ${c.id===adivinarCategoria(f)?'selected':''}>${c.emoji} ${esc(c.nombre)}</option>`).join('')}</select>` : '';
+    const estadoTxt = f._estado==='pendiente' ? '' : `<span class="chip">${f._estado}</span>`;
+
+    return `<div class="card ${f._estado!=='pendiente'?'done':''}" id="c${f.id}">
+      <div>
+        <div class="top"><h3>${esc(f.comercio)}</h3><span class="chip">${esc(f.banco_nombre)}</span><span class="chip ${f.tipo_cambio}">${TIPOS[f.tipo_cambio]||f.tipo_cambio}</span>${estadoTxt}</div>
+        ${diff}${obs}
+        <div class="meta">${links}${nota?' · '+nota:''}</div>
+      </div>
+      <div class="actions">${catSel}
+        <button class="ok" data-ok="${f.id}" ${f._estado!=='pendiente'?'disabled':''}>Aprobar</button>
+        <button class="no" data-no="${f.id}" ${f._estado!=='pendiente'?'disabled':''}>Rechazar</button>
+      </div></div>`;
+  }).join('') + (vis.length>400 ? `<div class="empty">…y ${vis.length-400} más. Filtrá para verlos.</div>` : '');
+
+  document.querySelectorAll('[data-ok]').forEach(b=>b.onclick=()=>aprobar(+b.dataset.ok));
+  document.querySelectorAll('[data-no]').forEach(b=>b.onclick=()=>rechazar(+b.dataset.no));
+}
+
+// ---------- acciones ----------
+async function aprobar(id){
+  const f = filas.find(x=>x.id===id); if (!f || f._estado!=='pendiente') return;
+  const sel = document.querySelector(`[data-cat="${id}"]`);
+  const { error } = await sb.rpc('aprobar_cambio', { p_id:id, p_categoria_id: sel ? +sel.value : null });
+  if (error) { toast('Error: '+error.message); return false; }
+  f._estado='aplicado'; render(); return true;
+}
+async function rechazar(id){
+  const f = filas.find(x=>x.id===id); if (!f || f._estado!=='pendiente') return;
+  const { error } = await sb.rpc('rechazar_cambio', { p_id:id });
+  if (error) { toast('Error: '+error.message); return false; }
+  f._estado='rechazado'; render(); return true;
+}
+async function enLote(fn, verbo){
+  const ids = visibles().filter(f=>f._estado==='pendiente').map(f=>f.id);
+  if (!ids.length) return;
+  if (!confirm(`¿${verbo} ${ids.length} cambios?`)) return;
+  let ok=0; for (const id of ids) { if (await fn(id)) ok++; }
+  toast(`${ok} de ${ids.length} ${verbo.toLowerCase()}s`);
+}
+$('#aprobarTodos').onclick = () => enLote(aprobar, 'Aprobar');
+$('#rechazarTodos').onclick = () => enLote(rechazar, 'Rechazar');
+$('#fBanco').onchange = $('#fTexto').oninput = $('#fHechos').onchange = render;
+
+init();
+</script>
+</body>
+</html>
