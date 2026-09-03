@@ -32,6 +32,10 @@
   .bulk{display:flex;gap:8px;margin:8px 0 16px;align-items:center;flex-wrap:wrap}.bulk .n{color:var(--muted)}
   .toast{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);background:var(--ink);color:#fff;padding:10px 16px;border-radius:10px;display:none}
   .empty{text-align:center;color:var(--muted);padding:40px}
+  .tabs{display:flex;gap:6px;margin:12px 0 4px}.tab{border-radius:999px}.tab.on{background:var(--ink);color:#fff;border-color:var(--ink)}
+  .catrow{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 14px;margin-bottom:6px;display:grid;grid-template-columns:1fr 220px;gap:12px;align-items:center}
+  .catrow select{margin:0;padding:7px}.catrow.ok{opacity:.5}
+  @media(max-width:640px){.catrow{grid-template-columns:1fr}}
   @media(max-width:640px){.card{grid-template-columns:1fr}.actions{flex-direction:row}}
 </style>
 </head>
@@ -48,6 +52,8 @@
   </div>
 
   <div id="app" hidden>
+    <div class="tabs"><button class="tab on" data-tab="cola">Cola de cambios</button><button class="tab" data-tab="cat">Sin categoría <span id="nCat"></span></button></div>
+    <div id="tabCola">
     <div class="stats" id="stats"></div>
     <div class="filters">
       <select id="fBanco"><option value="">Todos los bancos</option></select>
@@ -60,6 +66,11 @@
       <button class="no" id="rechazarTodos">Rechazar todos los visibles</button>
     </div>
     <div id="lista"></div>
+    </div>
+    <div id="tabCat" hidden>
+      <p class="meta" style="margin:12px 0">Comercios nuevos que entraron en "Varios" porque el nombre no dice a qué rubro pertenecen. Elegí la categoría y se guarda al instante (aplica a todos los tramos del comercio).</p>
+      <div id="listaCat"></div>
+    </div>
   </div>
 </div>
 <div class="toast" id="toast"></div>
@@ -138,13 +149,13 @@ function visibles(){
     (hechos || f._estado === 'pendiente'));
 }
 
+// null = "no sé": la función de la base intenta heredar de otra fila del mismo comercio,
+// y recién si no hay, cae en Varios. Mandar 17 desde acá le impedía heredar.
 function adivinarCategoria(f){
   if (f.base_categoria) return f.base_categoria;
-  const mismo = filas.find(o => o !== f && o.banco_id === f.banco_id && o.comercio.toLowerCase() === f.comercio.toLowerCase() && o.base_categoria);
-  if (mismo) return mismo.base_categoria;
   const texto = `${f.comercio} ${f.payload?.rubro ?? ''} ${f.payload?.observacion ?? ''}`;
   for (const [re, id] of CAT_KEYWORDS) if (re.test(texto)) return id;
-  return 17; // Varios
+  return null;
 }
 
 function fmtDias(d, todos){ if (todos) return 'todos los días'; return (d||[]).map(x=>DIAS_ES[x]||x).join(' · ') || null; }
@@ -182,7 +193,8 @@ function render(){
     const links = [f.link_fuente ? `<a href="${esc(f.link_fuente)}" target="_blank" rel="noopener">fuente ↗</a>` : null,
                    f.link_bases ? `<a href="${esc(f.link_bases)}" target="_blank" rel="noopener">bases ↗</a>` : null].filter(Boolean).join(' · ');
     const nota = f.notas ? esc(f.notas.replace(/^\[scraper\]\s*/,'').replace(/Fuente:.*$/,'')) : '';
-    const catSel = esAlta ? `<select data-cat="${f.id}">${categorias.map(c=>`<option value="${c.id}" ${c.id===adivinarCategoria(f)?'selected':''}>${c.emoji} ${esc(c.nombre)}</option>`).join('')}</select>` : '';
+    const guess = adivinarCategoria(f);
+    const catSel = esAlta ? `<select data-cat="${f.id}"><option value="" ${guess==null?'selected':''}>↳ heredar / automático</option>${categorias.map(c=>`<option value="${c.id}" ${c.id===guess?'selected':''}>${c.emoji} ${esc(c.nombre)}</option>`).join('')}</select>` : '';
     const estadoTxt = f._estado==='pendiente' ? (f._error ? `<span class="chip baja">error: ${esc(f._error)}</span>` : '') : `<span class="chip">${f._estado}</span>`;
 
     return `<div class="card ${f._estado!=='pendiente'?'done':''}" id="c${f.id}">
@@ -207,7 +219,7 @@ async function aprobar(id, { redibujar = true } = {}){
   // Si la tarjeta está dibujada se respeta lo que eligió Pablo; si no (más allá de las
   // 400 que se muestran), se usa la misma adivinanza que se le habría mostrado.
   const sel = document.querySelector(`[data-cat="${id}"]`);
-  const cat = f.tipo_cambio === 'alta' ? (sel ? +sel.value : adivinarCategoria(f)) : null;
+  const cat = f.tipo_cambio === 'alta' ? (sel ? (sel.value ? +sel.value : null) : adivinarCategoria(f)) : null;
   const { error } = await sb.rpc('aprobar_cambio', { p_id:id, p_categoria_id: cat });
   if (error) { f._error = error.message; if (redibujar) toast('Error: '+error.message); return false; }
   f._estado='aplicado'; if (redibujar) render(); return true;
@@ -239,6 +251,31 @@ window.addEventListener('beforeunload', (e) => { if (loteEnCurso) { e.preventDef
 $('#aprobarTodos').onclick = () => enLote(aprobar, 'Aplicar');
 $('#rechazarTodos').onclick = () => enLote(rechazar, 'Rechazar');
 $('#fBanco').onchange = $('#fTexto').oninput = $('#fHechos').onchange = render;
+
+// ---------- pestaña: sin categoría ----------
+document.querySelectorAll('.tab').forEach(t => t.onclick = () => {
+  document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('on', x===t));
+  $('#tabCola').hidden = t.dataset.tab !== 'cola'; $('#tabCat').hidden = t.dataset.tab !== 'cat';
+  if (t.dataset.tab === 'cat') cargarSinCategoria();
+});
+async function cargarSinCategoria(){
+  const { data, error } = await sb.from('sin_categoria').select('*').order('banco_nombre').order('comercio');
+  if (error) { toast(error.message); return; }
+  $('#nCat').textContent = data.length ? `(${data.length})` : '';
+  $('#listaCat').innerHTML = data.length ? data.map(r => `<div class="catrow" id="cr${r.id}">
+      <div><b>${esc(r.comercio)}</b> <span class="chip">${esc(r.banco_nombre)}</span>
+        <div class="meta">${r.porcentaje!=null?r.porcentaje+'% ':''}${esc(r.tipo_beneficio||'')}${r.observacion?' · '+esc(String(r.observacion).slice(0,90)):''}
+        ${r.link_oficial?` · <a href="${esc(r.link_oficial)}" target="_blank" rel="noopener">fuente ↗</a>`:''}</div></div>
+      <select data-setcat="${r.id}"><option value="">elegir categoría…</option>${categorias.filter(c=>c.id!==17).map(c=>`<option value="${c.id}">${c.emoji} ${esc(c.nombre)}</option>`).join('')}</select>
+    </div>`).join('') : '<div class="empty">Todo categorizado. 🎉</div>';
+  document.querySelectorAll('[data-setcat]').forEach(sel => sel.onchange = async () => {
+    if (!sel.value) return;
+    const { error } = await sb.rpc('cambiar_categoria', { p_beneficio_id:+sel.dataset.setcat, p_categoria_id:+sel.value });
+    if (error) { toast('Error: '+error.message); return; }
+    $('#cr'+sel.dataset.setcat).classList.add('ok'); sel.disabled = true;
+  });
+}
+sb.from('sin_categoria').select('id', { count:'exact', head:true }).then(({count}) => { if (count) $('#nCat').textContent = `(${count})`; });
 
 init();
 </script>
