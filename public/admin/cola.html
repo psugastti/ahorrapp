@@ -56,7 +56,7 @@
     </div>
     <div class="bulk">
       <span class="n" id="nVisibles"></span>
-      <button class="ok" id="aprobarTodos">Aprobar todos los visibles</button>
+      <button class="ok" id="aprobarTodos">Aplicar todos los visibles</button>
       <button class="no" id="rechazarTodos">Rechazar todos los visibles</button>
     </div>
     <div id="lista"></div>
@@ -72,6 +72,8 @@ const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 const $ = (s) => document.querySelector(s);
 const TIPOS = { alta:'Alta', baja:'Baja', porcentaje:'Porcentaje', dias:'Días', tipo_beneficio:'Tipo', verificar_condiciones:'Verificar', sospechoso:'Sospechoso', baja_por_vencimiento:'Vencido' };
 const DIAS_ES = { lunes:'Lun', martes:'Mar', miercoles:'Mié', jueves:'Jue', viernes:'Vie', sabado:'Sáb', domingo:'Dom' };
+// Qué hace el botón principal según el tipo de cambio: 'Aprobar' a secas confundía en las bajas.
+const VERBO = { alta:'Insertar', baja:'Dar de baja', porcentaje:'Cambiar %', dias:'Cambiar días', tipo_beneficio:'Cambiar tipo' };
 const NIVEL = { 1:'Clásica+', 2:'Oro+', 3:'Platinum+', 4:'Black+', 5:'Infinite' };
 // Para adivinar la categoría de un alta cuando no hay otra fila del mismo comercio.
 const CAT_KEYWORDS = [
@@ -190,8 +192,8 @@ function render(){
         <div class="meta">${links}${nota?' · '+nota:''}</div>
       </div>
       <div class="actions">${catSel}
-        <button class="ok" data-ok="${f.id}" ${f._estado!=='pendiente'?'disabled':''}>Aprobar</button>
-        <button class="no" data-no="${f.id}" ${f._estado!=='pendiente'?'disabled':''}>Rechazar</button>
+        <button class="${f.tipo_cambio==='baja'?'no':'ok'}" data-ok="${f.id}" ${f._estado!=='pendiente'?'disabled':''}>${VERBO[f.tipo_cambio]||'Aprobar'}</button>
+        <button data-no="${f.id}" ${f._estado!=='pendiente'?'disabled':''}>${f.tipo_cambio==='baja'?'Mantener activo':'Rechazar'}</button>
       </div></div>`;
   }).join('') + (vis.length>400 ? `<div class="empty">…y ${vis.length-400} más. Filtrá para verlos.</div>` : '');
 
@@ -220,7 +222,7 @@ async function enLote(fn, verbo){
   let ok=0; for (const id of ids) { if (await fn(id)) ok++; }
   toast(`${ok} de ${ids.length} ${verbo.toLowerCase()}s`);
 }
-$('#aprobarTodos').onclick = () => enLote(aprobar, 'Aprobar');
+$('#aprobarTodos').onclick = () => enLote(aprobar, 'Aplicar');
 $('#rechazarTodos').onclick = () => enLote(rechazar, 'Rechazar');
 $('#fBanco').onchange = $('#fTexto').oninput = $('#fHechos').onchange = render;
 
