@@ -138,7 +138,7 @@ for (const [bancoId, filas] of porBanco) {
           descripcion_anterior: `${b.porcentaje ?? '?'}% · ${b.tipo_beneficio ?? ''}`.trim(),
           descripcion_nuevo: 'ya no figura en el catálogo del banco',
           estado: 'pendiente',
-          notas: `No apareció en la lectura del ${hoy}. Verificar antes de dar de baja.`,
+          notas: `[scraper] No apareció en la lectura del ${hoy}. Verificar antes de dar de baja.`,
         });
         resumen.desaparecidos++;
       }
@@ -186,7 +186,7 @@ for (const [bancoId, filas] of porBanco) {
         descripcion_anterior: `${b.porcentaje}%`, descripcion_nuevo: `${f.porcentaje}%`,
         estado: 'pendiente',
         notas:
-          `Detectado por scraper automático.` +
+          `[scraper] Detectado por scraper automático.` +
           (tramos.length > 1 ? ` La fuente publica tramos: ${tramos.join('% / ')}%.` : '') +
           ` Fuente: ${f.link_oficial || f.fuente}`,
       });
@@ -206,7 +206,7 @@ for (const [bancoId, filas] of porBanco) {
         tipo_cambio: 'tipo_beneficio', comercio: b.comercio, beneficio_id: b.id,
         descripcion_anterior: 'descuento', descripcion_nuevo: 'reintegro',
         estado: 'aplicado_auto',
-        notas: `La fuente dice "reintegro" textualmente. Fuente: ${f.link_oficial || f.fuente}`,
+        notas: `[scraper] La fuente dice "reintegro" textualmente. Fuente: ${f.link_oficial || f.fuente}`,
       });
     } else if (!soloPresencia && f.tipo_beneficio && b.tipo_beneficio && f.tipo_beneficio !== b.tipo_beneficio) {
       coincide = false;
@@ -215,7 +215,7 @@ for (const [bancoId, filas] of porBanco) {
         tipo_cambio: 'tipo_beneficio', comercio: b.comercio, beneficio_id: b.id,
         descripcion_anterior: b.tipo_beneficio, descripcion_nuevo: f.tipo_beneficio,
         estado: 'pendiente',
-        notas: `Fuente: ${f.link_oficial || f.fuente}`,
+        notas: `[scraper] Fuente: ${f.link_oficial || f.fuente}`,
       });
     }
     const diasBase = [...(b.dias || [])].sort().join(',');
@@ -227,7 +227,7 @@ for (const [bancoId, filas] of porBanco) {
         tipo_cambio: 'dias', comercio: b.comercio, beneficio_id: b.id,
         descripcion_anterior: diasBase, descripcion_nuevo: diasFuente,
         estado: 'pendiente',
-        notas: `Fuente: ${f.link_oficial || f.fuente}`,
+        notas: `[scraper] Fuente: ${f.link_oficial || f.fuente}`,
       });
     }
 
@@ -262,7 +262,7 @@ for (const [bancoId, filas] of porBanco) {
           f.vence ? `vence ${f.vence}` : null,
         ].filter(Boolean).join(' · '),
         estado: 'pendiente',
-        notas: `Comercio nuevo en el catálogo. Fuente: ${f.link_oficial || f.fuente}`,
+        notas: `[scraper] Comercio nuevo en el catálogo. Fuente: ${f.link_oficial || f.fuente}`,
       });
     }
   }
@@ -294,6 +294,24 @@ if (resumen.bancos_frenados.length) {
 if (DRY) { log('\n(dry-run: no se escribió nada)\n'); process.exit(0); }
 
 // ---------- escritura ----------
+// Cada corrida re-evalúa TODO contra la fuente, así que la cola pendiente de la corrida
+// anterior queda vieja: se marca 'superado' (no se borra, queda el historial). Lo que
+// Pablo ya aprobó o rechazó no se toca porque ya no está en 'pendiente'.
+{
+  const { data: viejos } = await db
+    .from('cambios_scraping')
+    .select('id')
+    .eq('estado', 'pendiente')
+    .like('notas', '[scraper]%');
+  if (viejos?.length) {
+    await db
+      .from('cambios_scraping')
+      .update({ estado: 'superado' })
+      .in('id', viejos.map((v) => v.id));
+    log(`  ${viejos.length} pendientes de corridas anteriores marcados como superados.`);
+  }
+}
+
 if (bajas.length) {
   for (let i = 0; i < bajas.length; i += 300) {
     const lote = bajas.slice(i, i + 300);
