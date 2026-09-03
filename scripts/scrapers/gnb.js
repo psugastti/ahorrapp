@@ -14,13 +14,22 @@ const API =
   'https://www.beneficiosbancognb.com.py/v2/apis/rewards/rewards/v1/benefits/benefits?pageSize=1000';
 const SITIO = 'https://www.beneficiosbancognb.com.py/v2/beneficios';
 
+const ACENTOS = {
+  acute: { a: 'á', e: 'é', i: 'í', o: 'ó', u: 'ú', A: 'Á', E: 'É', I: 'Í', O: 'Ó', U: 'Ú' },
+  grave: { a: 'à', e: 'è', i: 'ì', o: 'ò', u: 'ù', A: 'À', E: 'È', I: 'Ì', O: 'Ò', U: 'Ù' },
+  circ: { a: 'â', e: 'ê', i: 'î', o: 'ô', u: 'û', A: 'Â', E: 'Ê', I: 'Î', O: 'Ô', U: 'Û' },
+  uml: { a: 'ä', e: 'ë', i: 'ï', o: 'ö', u: 'ü', A: 'Ä', E: 'Ë', I: 'Ï', O: 'Ö', U: 'Ü' },
+};
 const sinHtml = (s) =>
   N.limpiar(
     String(s ?? '')
       .replace(/<[^>]*>/g, ' ')
       .replace(/&nbsp;?/gi, ' ')
-      .replace(/&aacute;?/gi, 'á').replace(/&eacute;?/gi, 'é').replace(/&iacute;?/gi, 'í')
-      .replace(/&oacute;?/gi, 'ó').replace(/&uacute;?/gi, 'ú').replace(/&ntilde;?/gi, 'ñ')
+      // entidades con acento: &aacute; &agrave; &acirc; &auml; &ntilde; … (GNB escribe
+      // "Cl&agrave;sicas" y si se pierde la vocal el tramo Clásica no se reconoce)
+      .replace(/&([aeiouAEIOU])(acute|grave|circ|uml);?/g, (_, v, tipo) => ACENTOS[tipo]?.[v] ?? v)
+      .replace(/&([nN])tilde;?/g, (_, n) => (n === 'N' ? 'Ñ' : 'ñ'))
+      .replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(Number(n)))
       .replace(/&[a-z]+;/gi, ' ')
   );
 

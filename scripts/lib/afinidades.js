@@ -3,7 +3,8 @@
 // nivel_min = el MENOR nivel de la lista (el mínimo que necesitás para acceder).
 // Si el menor es 1 → null, que en la app significa "cualquier tarjeta".
 const NIVELES = [
-  [/cl[aá]sica|classic|est[aá]ndar|standard|dinelco|prepaga/i, 1],
+  // "cl.{0,2}sica": el texto llega a veces con la vocal rota ("Cl sica", "Clàsica", "Cl?sica").
+  [/cl.{0,2}sica|classic|est.{0,2}ndar|standard|dinelco|prepaga/i, 1],
   [/\boro\b|gold/i, 2],
   [/platinum|platino/i, 3],
   [/black|signature|metalcard|premier/i, 4],

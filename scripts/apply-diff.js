@@ -23,6 +23,10 @@
 import { db, selectAll } from './lib/db.js';
 import { claveComercio, claveBase } from './lib/normalize.js';
 
+// Nombres de fila que ya traen el tramo de tarjeta en el rótulo (Continental publica
+// "X - Privilege" como entrada aparte).
+const NOMBRE_CON_NIVEL = /privilege|infinite|black|platinum|signature|metalcard|premier/i;
+
 const DRY = process.argv.includes('--dry-run');
 const hoy = new Date().toISOString().slice(0, 10);
 // Umbrales para permitir BAJAS. Son altos a propósito: concluir que un comercio
@@ -34,7 +38,7 @@ const UMBRAL_EMPAREJADOS = 0.8; // cuántos de la base encuentro por nombre
 
 const log = (...a) => console.log(...a);
 const resumen = {
-  vencidos: 0, desaparecidos: 0, vigencia_corregida: 0, topes_completados: 0, dias_completados: 0, tipo_corregido: 0,
+  vencidos: 0, desaparecidos: 0, vigencia_corregida: 0, topes_completados: 0, dias_completados: 0, niveles_completados: 0, tipo_corregido: 0,
   links_completados: 0, verificados: 0, encolados: 0, bancos_frenados: [],
 };
 
@@ -114,11 +118,21 @@ for (const [bancoId, filas] of porBanco) {
       }
     }
   }
+  // Orden de búsqueda: nombre exacto (con tramo) → nombre exacto (menor tramo, para
+  // filas viejas sin nivel) → nombre base (con tramo) → nombre base (menor tramo).
+  // El nombre exacto va SIEMPRE antes que el base: "Vans - Privilege" (nivel null en la
+  // base) tiene que emparejar con la fila Privilege del scraper, no con "Vans" a secas.
   const buscar = (b) => {
+    const kc = claveComercio(b.comercio);
+    const kb = claveBase(b.comercio);
     const suf = nivelDe(b);
-    const exacto = porClave.get(claveComercio(b.comercio) + suf) ?? porClave.get(claveBase(b.comercio) + suf);
-    if (exacto || !conTramos || b.nivel_min != null) return exacto;
-    return porClaveSinTramo.get(claveComercio(b.comercio)) ?? porClaveSinTramo.get(claveBase(b.comercio));
+    const sinNivel = conTramos && b.nivel_min == null;
+    return (
+      porClave.get(kc + suf) ??
+      (sinNivel ? porClaveSinTramo.get(kc) : undefined) ??
+      porClave.get(kb + suf) ??
+      (sinNivel ? porClaveSinTramo.get(kb) : undefined)
+    );
   };
 
   // freno 2: si el emparejamiento por nombre falla en masa, no son bajas reales,
@@ -174,6 +188,20 @@ for (const [bancoId, filas] of porBanco) {
       campos.tope_monto = p.tope_monto;
       if (p.tope_periodo) campos.tope_periodo = p.tope_periodo;
       resumen.topes_completados++;
+    }
+    // nivel de tarjeta: solo se completa cuando el propio nombre de la fila en la base ya
+    // dice el tramo ("Vans - Privilege", "Cole Haan Black") y la fuente lo confirma.
+    // Es textual y reversible; queda registrado en la cola como aplicado_auto.
+    if (b.nivel_min == null && p.nivel_min != null && NOMBRE_CON_NIVEL.test(b.comercio)) {
+      campos.nivel_min = p.nivel_min;
+      resumen.niveles_completados++;
+      cola.push({
+        fecha: hoy, banco_id: bancoId, banco_nombre: nombre,
+        tipo_cambio: 'nivel_min', comercio: b.comercio, beneficio_id: b.id,
+        descripcion_anterior: 'cualquier tarjeta', descripcion_nuevo: `nivel ${p.nivel_min}+`,
+        estado: 'aplicado_auto',
+        notas: `[scraper] El nombre ya decía el tramo y la fuente lo confirma. Fuente: ${f.link_oficial || f.fuente}`,
+      });
     }
     if (!(b.dias || []).length && !b.todos_los_dias && ((p.dias || []).length || p.todos_los_dias)) {
       campos.dias = p.dias || [];
@@ -294,6 +322,7 @@ log(`    vencidos dados de baja   : ${resumen.vencidos}`);
 log(`    vigencia corregida       : ${resumen.vigencia_corregida}`);
 log(`    topes completados        : ${resumen.topes_completados}`);
 log(`    días completados         : ${resumen.dias_completados}`);
+log(`    niveles completados      : ${resumen.niveles_completados}`);
 log(`    descuento→reintegro      : ${resumen.tipo_corregido}  (la fuente lo dice textual)`);
 log(`    links completados        : ${resumen.links_completados}`);
 log(`    sellados verificado_en   : ${resumen.verificados}`);
