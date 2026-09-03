@@ -112,13 +112,21 @@ for (const [bancoId, filas] of porBanco) {
   // "Cole Haan · Platinum+" no pisa a "Cole Haan · cualquier tarjeta".
   const conTramos = filas.some((f) => f.payload?.nivel_min != null);
   const nivelDe = (x) => (conTramos ? `|n${x?.nivel_min ?? ''}` : '');
+  // Cada clave guarda TODAS las filas que caen en ella: Interfisa publica dos tramos
+  // con el mismo nivel ("20% con Classic…" y "5% con débito") y si se quedara solo la
+  // primera, la fila de 5% de la base se propondría como cambio a 20% cada semana.
   const porClave = new Map();
   for (const f of filas) {
     const suf = nivelDe(f.payload);
     for (const k of [claveComercio(f.comercio) + suf, claveBase(f.comercio) + suf]) {
-      if (k && !porClave.has(k)) porClave.set(k, f);
+      if (!k) continue;
+      if (!porClave.has(k)) porClave.set(k, []);
+      if (!porClave.get(k).includes(f)) porClave.get(k).push(f);
     }
   }
+  // De las candidatas, la que tiene el mismo % que la fila de la base; si no, la primera.
+  const elegir = (cands, b) =>
+    cands && cands.length ? (cands.find((f) => f.porcentaje === b.porcentaje) ?? cands[0]) : undefined;
   // Índice auxiliar: por clave sin tramo → la fila de menor nivel. Sirve para las filas
   // viejas de la base que no tienen nivel_min cargado ("Vans - Privilege" con null):
   // si no hay match exacto, se emparejan con el único/menor tramo de ese comercio.
@@ -141,9 +149,9 @@ for (const [bancoId, filas] of porBanco) {
     const suf = nivelDe(b);
     const sinNivel = conTramos && b.nivel_min == null;
     return (
-      porClave.get(kc + suf) ??
+      elegir(porClave.get(kc + suf), b) ??
       (sinNivel ? porClaveSinTramo.get(kc) : undefined) ??
-      porClave.get(kb + suf) ??
+      elegir(porClave.get(kb + suf), b) ??
       (sinNivel ? porClaveSinTramo.get(kb) : undefined)
     );
   };
@@ -300,7 +308,7 @@ for (const [bancoId, filas] of porBanco) {
     for (const f of filas) {
       if (emparejadas.has(f)) continue;
       // una fila por comercio: la fuente puede repetir el mismo local
-      const kf = claveComercio(f.comercio) + nivelDe(f.payload);
+      const kf = claveComercio(f.comercio) + nivelDe(f.payload) + `|p${f.porcentaje ?? ''}`;
       if (yaVisto.has(kf)) continue;
       yaVisto.add(kf);
       // avisos (ej. "salió el catálogo Ueno") no son altas: van como tarea de revisión
