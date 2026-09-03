@@ -102,9 +102,23 @@ for (const [bancoId, filas] of porBanco) {
       if (k && !porClave.has(k)) porClave.set(k, f);
     }
   }
+  // Índice auxiliar: por clave sin tramo → la fila de menor nivel. Sirve para las filas
+  // viejas de la base que no tienen nivel_min cargado ("Vans - Privilege" con null):
+  // si no hay match exacto, se emparejan con el único/menor tramo de ese comercio.
+  const porClaveSinTramo = new Map();
+  if (conTramos) {
+    for (const f of filas) {
+      for (const k of [claveComercio(f.comercio), claveBase(f.comercio)]) {
+        const prev = porClaveSinTramo.get(k);
+        if (!prev || (f.payload?.nivel_min ?? 0) < (prev.payload?.nivel_min ?? 0)) porClaveSinTramo.set(k, f);
+      }
+    }
+  }
   const buscar = (b) => {
     const suf = nivelDe(b);
-    return porClave.get(claveComercio(b.comercio) + suf) ?? porClave.get(claveBase(b.comercio) + suf);
+    const exacto = porClave.get(claveComercio(b.comercio) + suf) ?? porClave.get(claveBase(b.comercio) + suf);
+    if (exacto || !conTramos || b.nivel_min != null) return exacto;
+    return porClaveSinTramo.get(claveComercio(b.comercio)) ?? porClaveSinTramo.get(claveBase(b.comercio));
   };
 
   // freno 2: si el emparejamiento por nombre falla en masa, no son bajas reales,
@@ -248,9 +262,11 @@ for (const [bancoId, filas] of porBanco) {
       const kf = claveComercio(f.comercio) + nivelDe(f.payload);
       if (yaVisto.has(kf)) continue;
       yaVisto.add(kf);
+      // avisos (ej. "salió el catálogo Ueno") no son altas: van como tarea de revisión
+      const esAviso = !!f.payload?.revisar_a_mano;
       cola.push({
         fecha: hoy, banco_id: bancoId, banco_nombre: nombre,
-        tipo_cambio: 'alta', comercio: f.comercio, beneficio_id: null,
+        tipo_cambio: esAviso ? 'verificar_condiciones' : 'alta', comercio: f.comercio, beneficio_id: null,
         porcentaje_nuevo: f.porcentaje,
         payload: f.payload ?? null,
         descripcion_nuevo: [

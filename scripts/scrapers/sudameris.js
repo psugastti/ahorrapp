@@ -25,6 +25,7 @@ export async function run() {
   paginas.forEach((res, i) => {
     if (!res.ok) return;
     const $$ = cheerio.load(res.value);
+    $$('style, script, nav, header, footer').remove();
     const cuerpo = N.limpiar($$('#main, main, body').first().text());
     const comercio = N.limpiar($$('h3').first().text());
     if (!comercio) return;

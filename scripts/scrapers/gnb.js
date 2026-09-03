@@ -1,5 +1,6 @@
 import { get } from '../lib/http.js';
 import * as N from '../lib/normalize.js';
+import { expandirPorTramos } from '../lib/tramos.js';
 
 export const banco = 'GNB';
 export const fuente = 'GNB API oficial';
@@ -46,17 +47,18 @@ export async function run() {
 
   return filas
     .filter((b) => b.status !== false)
-    .map((b) => {
+    .flatMap((b) => {
       const mini = sinHtml(b.miniDescription);
       const desc = sinHtml(b.description);
       const texto = `${mini} ${desc}`;
       const { dias, todosLosDias } = N.parseDias(texto);
-      return {
-        comercio: N.limpiar(b.title),
+      const fila = {
+        comercio: nombreComercio(b.title),
         // circleText es el % destacado ("-25%"); si falta, se busca en el texto
         porcentaje: N.parsePorcentajeMax(b.circleText) ?? N.parsePorcentajeMax(texto),
         porcentajes: N.parsePorcentajes(texto),
         tipo_beneficio: N.parseTipo(texto),
+        nivel_min: null,
         dias,
         todos_los_dias: todosLosDias,
         vence: b.endDate ? String(b.endDate).slice(0, 10) : null,
@@ -68,5 +70,16 @@ export async function run() {
         url_bases: null,
         externo_id: b.id != null ? String(b.id) : null,
       };
+      // GNB discrimina por tarjeta en la descripción larga ("25% con Black, Black Premier y
+      // Metalcard Premier. 20% con Clásicas, Oro"): una fila por tramo, con nivel_min.
+      return expandirPorTramos(fila, desc);
     });
+}
+
+// Los títulos de GNB a veces son campañas y no comercios: "Día GNB Casa Rica",
+// "Cibermiércoles Casa Rica". Se recorta el prefijo para emparejar con el comercio real.
+function nombreComercio(titulo) {
+  return N.limpiar(String(titulo ?? ''))
+    .replace(/^(d[ií]a\s+gnb|ciber\s*(lunes|martes|mi[eé]rcoles|jueves|viernes|s[aá]bado|domingo)|jueves\s+de|lunes\s+de|martes\s+de|mi[eé]rcoles\s+de|viernes\s+de)\s+/i, '')
+    .trim() || N.limpiar(titulo);
 }
